@@ -40,9 +40,14 @@
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Drawing" />
+    <Reference Include="System.Runtime.Serialization" />
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Framework\FrameworkEnvelope.cs" />
+    <Compile Include="Framework\FrameworkSerialization.cs" />
+    <Compile Include="Framework\FrameworkTypes.cs" />
+    <Compile Include="Framework\PhinixExtensionRegistry.cs" />
     <Compile Include="IPersistent.cs" />
     <Compile Include="LogEventArgs.cs" />
     <Compile Include="ILoggable.cs" />
