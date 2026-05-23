@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package Phinix.Framework;
+
+import "Shared/FrameworkShared.proto";
+
+message FrameworkMessagePacket {
+  FrameworkHeader header = 1;
+  bytes payload_bytes = 2;
+}

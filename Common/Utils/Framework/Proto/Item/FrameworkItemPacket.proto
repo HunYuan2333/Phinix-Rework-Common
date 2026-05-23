@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package Phinix.Framework;
+
+import "Shared/FrameworkShared.proto";
+
+message FrameworkItemPacket {
+  FrameworkHeader header = 1;
+  string codec_id = 2;
+  bytes payload_bytes = 3;
+}
+
+enum FrameworkItemQuality {
+  FRAMEWORK_ITEM_QUALITY_UNSPECIFIED = 0;
+  FRAMEWORK_ITEM_QUALITY_AWFUL = 1;
+  FRAMEWORK_ITEM_QUALITY_POOR = 2;
+  FRAMEWORK_ITEM_QUALITY_NORMAL = 3;
+  FRAMEWORK_ITEM_QUALITY_GOOD = 4;
+  FRAMEWORK_ITEM_QUALITY_EXCELLENT = 5;
+  FRAMEWORK_ITEM_QUALITY_MASTERWORK = 6;
+  FRAMEWORK_ITEM_QUALITY_LEGENDARY = 7;
+  FRAMEWORK_ITEM_QUALITY_NONE = 8;
+}
+
+message FrameworkVanillaItemData {
+  string def_name = 1;
+  int32 stack_count = 2;
+  string stuff_def_name = 3;
+  FrameworkItemQuality quality = 4;
+  int32 hit_points = 5;
+  FrameworkVanillaItemData inner_item = 6;
+}
+
+message FrameworkItemCollection {
+  repeated FrameworkItemPacket items = 1;
+}

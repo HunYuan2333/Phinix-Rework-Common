@@ -15,7 +15,7 @@ namespace Utils.Framework
     }
 
     [DataContract]
-    public sealed class FrameworkEnvelope
+    public sealed class FrameworkPacket
     {
         [DataMember(Order = 0)]
         public int Version { get; set; } = FrameworkProtocol.Version;

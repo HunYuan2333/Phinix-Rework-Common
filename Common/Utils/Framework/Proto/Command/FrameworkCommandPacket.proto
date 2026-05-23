@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package Phinix.Framework;
+
+import "Shared/FrameworkShared.proto";
+
+enum FrameworkCommandKind {
+  FRAMEWORK_COMMAND_KIND_UNSPECIFIED = 0;
+  FRAMEWORK_COMMAND_KIND_REQUEST = 1;
+  FRAMEWORK_COMMAND_KIND_RESPONSE = 2;
+  FRAMEWORK_COMMAND_KIND_STATE = 3;
+  FRAMEWORK_COMMAND_KIND_EVENT = 4;
+}
+
+message FrameworkCommandPacket {
+  FrameworkHeader header = 1;
+  FrameworkCommandKind command_kind = 2;
+  bytes payload_bytes = 3;
+}

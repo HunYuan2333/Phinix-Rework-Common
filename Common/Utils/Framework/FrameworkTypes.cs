@@ -9,7 +9,7 @@ namespace Utils.Framework
         public const int Version = 2;
         public const string KindHello = "hello";
         public const string KindCapabilities = "capabilities";
-        public const string KindExtension = "extension";
+        public const string KindMessage = "message";
         public const string SystemSenderUuid = "__phinix_system__";
     }
 
@@ -67,9 +67,9 @@ namespace Utils.Framework
 
     public interface IMessageRenderer
     {
-        bool CanRender(FrameworkEnvelope envelope);
+        bool CanRender(FrameworkPacket message);
 
-        FrameworkDisplayMessage Render(FrameworkEnvelope envelope);
+        FrameworkDisplayMessage Render(FrameworkPacket message);
     }
 
     public interface IClientMessageHandler : IMessageHandler
@@ -78,16 +78,16 @@ namespace Utils.Framework
 
         ClientOutgoingMessageResult HandleOutgoingText(string rawMessage, ClientFrameworkContext context);
 
-        bool CanHandleIncomingEnvelope(FrameworkEnvelope envelope);
+        bool CanHandleIncomingMessage(FrameworkPacket message);
 
-        ClientIncomingMessageResult HandleIncomingEnvelope(FrameworkEnvelope envelope, ClientFrameworkContext context);
+        ClientIncomingMessageResult HandleIncomingMessage(FrameworkPacket message, ClientFrameworkContext context);
     }
 
     public interface IServerMessageHandler : IMessageHandler
     {
-        bool CanHandleIncomingEnvelope(FrameworkEnvelope envelope);
+        bool CanHandleIncomingMessage(FrameworkPacket message);
 
-        ServerIncomingMessageResult HandleIncomingEnvelope(FrameworkEnvelope envelope, ServerFrameworkContext context);
+        ServerIncomingMessageResult HandleIncomingMessage(FrameworkPacket message, ServerFrameworkContext context);
     }
 
     public interface IItemCodec
@@ -118,14 +118,14 @@ namespace Utils.Framework
     {
         public MessageHandlingResultAction Action { get; set; } = MessageHandlingResultAction.Handled;
 
-        public FrameworkEnvelope Envelope { get; set; }
+        public FrameworkPacket Message { get; set; }
     }
 
     public sealed class ClientIncomingMessageResult
     {
         public MessageHandlingResultAction Action { get; set; } = MessageHandlingResultAction.Handled;
 
-        public FrameworkEnvelope Envelope { get; set; }
+        public FrameworkPacket Message { get; set; }
 
         public FrameworkDisplayMessage DisplayMessage { get; set; }
     }
@@ -134,7 +134,7 @@ namespace Utils.Framework
     {
         public MessageHandlingResultAction Action { get; set; } = MessageHandlingResultAction.Handled;
 
-        public FrameworkEnvelope Envelope { get; set; }
+        public FrameworkPacket Message { get; set; }
     }
 
     public sealed class ItemCodecContext
@@ -163,7 +163,7 @@ namespace Utils.Framework
 
         public FrameworkCompatibilityMode CompatibilityMode { get; set; }
 
-        public Action<FrameworkEnvelope> SendEnvelope { get; set; }
+        public Action<FrameworkPacket> SendMessage { get; set; }
 
         public IReadOnlyCollection<string> RemoteCapabilities { get; set; } = Array.Empty<string>();
 
@@ -180,9 +180,9 @@ namespace Utils.Framework
 
         public string SenderUuid { get; set; }
 
-        public Action<string, FrameworkEnvelope> SendEnvelope { get; set; }
+        public Action<string, FrameworkPacket> SendMessage { get; set; }
 
-        public Action<FrameworkEnvelope, string[]> BroadcastEnvelope { get; set; }
+        public Action<FrameworkPacket, string[]> BroadcastMessage { get; set; }
 
         public Func<string, bool> IsConnectionFrameworkCapable { get; set; }
 

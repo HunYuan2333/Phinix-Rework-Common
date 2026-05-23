@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package Phinix.Framework;
+
+import "google/protobuf/timestamp.proto";
+
+message FrameworkMetadataEntry {
+  string key = 1;
+  string value = 2;
+}
+
+enum FrameworkFlow {
+  FRAMEWORK_FLOW_UNSPECIFIED = 0;
+  FRAMEWORK_FLOW_MESSAGE = 1;
+  FRAMEWORK_FLOW_COMMAND = 2;
+  FRAMEWORK_FLOW_ITEM = 3;
+}
+
+message FrameworkHeader {
+  uint32 framework_version = 1;
+  FrameworkFlow flow = 2;
+  string type_id = 3;
+  string packet_id = 4;
+  string session_id = 5;
+  string sender_uuid = 6;
+  google.protobuf.Timestamp timestamp = 7;
+  repeated FrameworkMetadataEntry metadata = 8;
+}

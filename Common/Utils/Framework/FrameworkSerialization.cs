@@ -6,14 +6,14 @@ namespace Utils.Framework
 {
     public static class FrameworkSerialization
     {
-        public static byte[] SerializeEnvelope(FrameworkEnvelope envelope)
+        public static byte[] SerializePacket(FrameworkPacket packet)
         {
-            return Serialize(envelope);
+            return Serialize(packet);
         }
 
-        public static FrameworkEnvelope DeserializeEnvelope(byte[] data)
+        public static FrameworkPacket DeserializePacket(byte[] data)
         {
-            return Deserialize<FrameworkEnvelope>(data);
+            return Deserialize<FrameworkPacket>(data);
         }
 
         public static string SerializePayload<T>(T payload)

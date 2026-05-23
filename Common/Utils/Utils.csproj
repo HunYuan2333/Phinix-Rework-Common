@@ -44,9 +44,13 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Framework\FrameworkEnvelope.cs" />
+    <Compile Include="Framework\FrameworkPacket.cs" />
     <Compile Include="Framework\FrameworkSerialization.cs" />
     <Compile Include="Framework\FrameworkTypes.cs" />
+    <Compile Include="Framework\Proto\Shared\compiled\*.cs" />
+    <Compile Include="Framework\Proto\Message\compiled\*.cs" />
+    <Compile Include="Framework\Proto\Command\compiled\*.cs" />
+    <Compile Include="Framework\Proto\Item\compiled\*.cs" />
     <Compile Include="Framework\PhinixExtensionRegistry.cs" />
     <Compile Include="IPersistent.cs" />
     <Compile Include="LogEventArgs.cs" />
@@ -64,6 +68,14 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
+    <Content Include="Framework\Proto\Shared\*.proto" />
+    <Content Include="Framework\Proto\Message\*.proto" />
+    <Content Include="Framework\Proto\Command\*.proto" />
+    <Content Include="Framework\Proto\Item\*.proto" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="compile-proto.bat" />
+    <None Include="compile-proto.sh" />
     <None Include="packages.config" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
