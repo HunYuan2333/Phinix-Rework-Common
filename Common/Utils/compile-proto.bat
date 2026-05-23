@@ -2,8 +2,9 @@
 setlocal
 
 set "ROOT_DIR=%~dp0"
-set "PROTO_DIR=%ROOT_DIR%Framework\Proto"
-set "GOOGLE_PROTO_DIR=%ROOT_DIR%..\..\Dependencies\protobuf\src"
+if "%ROOT_DIR:~-1%"=="\" set "ROOT_DIR=%ROOT_DIR:~0,-1%"
+set "PROTO_DIR=%ROOT_DIR%\Framework\Proto"
+set "GOOGLE_PROTO_DIR=%ROOT_DIR%\..\..\Dependencies\protobuf\src"
 
 if not exist "%PROTO_DIR%\Shared\compiled" mkdir "%PROTO_DIR%\Shared\compiled"
 if not exist "%PROTO_DIR%\Message\compiled" mkdir "%PROTO_DIR%\Message\compiled"
@@ -15,7 +16,7 @@ protoc --proto_path="%PROTO_DIR%" --proto_path="%GOOGLE_PROTO_DIR%" --csharp_out
 if errorlevel 1 exit /b 1
 
 echo Compiling framework message protos
-protoc --proto_path="%PROTO_DIR%" --proto_path="%GOOGLE_PROTO_DIR%" --csharp_out="%PROTO_DIR%\Message\compiled" "%PROTO_DIR%\Message\FrameworkMessagePacket.proto"
+protoc --proto_path="%PROTO_DIR%" --proto_path="%GOOGLE_PROTO_DIR%" --csharp_out="%PROTO_DIR%\Message\compiled" "%PROTO_DIR%\Message\FrameworkMessagePacket.proto" "%PROTO_DIR%\Message\BuiltInChat.proto"
 if errorlevel 1 exit /b 1
 
 echo Compiling framework command protos

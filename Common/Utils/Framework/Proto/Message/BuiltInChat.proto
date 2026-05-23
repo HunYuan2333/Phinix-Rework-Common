@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package Phinix.Framework;
+
+import "google/protobuf/timestamp.proto";
+
+message BuiltInChatMessagePayload {
+  string message_id = 1;
+  string sender_uuid = 2;
+  string message = 3;
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+message BuiltInChatHistoryStore {
+  repeated BuiltInChatMessagePayload chat_messages = 1;
+}

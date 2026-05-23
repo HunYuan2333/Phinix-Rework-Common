@@ -1,4 +1,3 @@
 [submodule "Dependencies/protobuf"]
 	path = Dependencies/protobuf
-	url = https://github.com/thomotron/protobuf.git
-	branch = 3.11.x-dotnet-4.7.2
+	url = https://github.com/protocolbuffers/protobuf.git

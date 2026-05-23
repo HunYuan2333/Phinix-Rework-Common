@@ -25,6 +25,8 @@ namespace Utils.Framework
                     typeof(IMessageRenderer).IsAssignableFrom(type) ||
                     typeof(IClientMessageHandler).IsAssignableFrom(type) ||
                     typeof(IServerMessageHandler).IsAssignableFrom(type) ||
+                    typeof(IClientCommandHandler).IsAssignableFrom(type) ||
+                    typeof(IServerCommandHandler).IsAssignableFrom(type) ||
                     typeof(IItemCodec).IsAssignableFrom(type) ||
                     typeof(ITradeCompletionHandler).IsAssignableFrom(type)
                 );
@@ -56,6 +58,8 @@ namespace Utils.Framework
                 if (instance is IMessageRenderer renderer) discovered.MessageRenderers.Add(renderer);
                 if (instance is IClientMessageHandler clientHandler) discovered.ClientMessageHandlers.Add(clientHandler);
                 if (instance is IServerMessageHandler serverHandler) discovered.ServerMessageHandlers.Add(serverHandler);
+                if (instance is IClientCommandHandler clientCommandHandler) discovered.ClientCommandHandlers.Add(clientCommandHandler);
+                if (instance is IServerCommandHandler serverCommandHandler) discovered.ServerCommandHandlers.Add(serverCommandHandler);
                 if (instance is IItemCodec itemCodec) discovered.ItemCodecs.Add(itemCodec);
                 if (instance is ITradeCompletionHandler tradeCompletionHandler) discovered.TradeCompletionHandlers.Add(tradeCompletionHandler);
             }
@@ -63,6 +67,8 @@ namespace Utils.Framework
             discovered.MessageInterceptors.Sort((left, right) => left.Priority.CompareTo(right.Priority));
             discovered.ClientMessageHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
             discovered.ServerMessageHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
+            discovered.ClientCommandHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
+            discovered.ServerCommandHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
             discovered.TradeCompletionHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
 
             return discovered;
@@ -73,7 +79,9 @@ namespace Utils.Framework
             HashSet<string> capabilities = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
                 "core.framework.v2",
-                "core.message-pipeline"
+                "core.message-pipeline",
+                "core.command-pipeline",
+                "core.item-pipeline"
             };
 
             foreach (ICapabilityProvider capabilityProvider in discovered.CapabilityProviders)

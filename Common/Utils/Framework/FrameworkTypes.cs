@@ -10,7 +10,12 @@ namespace Utils.Framework
         public const string KindHello = "hello";
         public const string KindCapabilities = "capabilities";
         public const string KindMessage = "message";
+        public const string KindCommand = "command";
+        public const string KindItem = "item";
         public const string SystemSenderUuid = "__phinix_system__";
+        public const string BuiltInChatMessageType = "builtin.chat.message";
+        public const string BuiltInChatHistoryRequestType = "builtin.chat.history.request";
+        public const string BuiltInChatHistorySyncCompleteType = "builtin.chat.history.sync-complete";
     }
 
     public enum FrameworkCompatibilityMode
@@ -103,6 +108,25 @@ namespace Utils.Framework
         object Decode(FrameworkItemPayload payload, ItemCodecContext context);
     }
 
+    public interface ICommandHandler
+    {
+        int Priority { get; }
+    }
+
+    public interface IClientCommandHandler : ICommandHandler
+    {
+        bool CanHandleIncomingCommand(FrameworkPacket command);
+
+        ClientIncomingCommandResult HandleIncomingCommand(FrameworkPacket command, ClientFrameworkContext context);
+    }
+
+    public interface IServerCommandHandler : ICommandHandler
+    {
+        bool CanHandleIncomingCommand(FrameworkPacket command);
+
+        ServerIncomingCommandResult HandleIncomingCommand(FrameworkPacket command, ServerFrameworkContext context);
+    }
+
     public interface ITradeCompletionHandler
     {
         string HandlerId { get; }
@@ -135,6 +159,22 @@ namespace Utils.Framework
         public MessageHandlingResultAction Action { get; set; } = MessageHandlingResultAction.Handled;
 
         public FrameworkPacket Message { get; set; }
+    }
+
+    public sealed class ClientIncomingCommandResult
+    {
+        public MessageHandlingResultAction Action { get; set; } = MessageHandlingResultAction.Handled;
+
+        public FrameworkPacket Command { get; set; }
+
+        public FrameworkDisplayMessage DisplayMessage { get; set; }
+    }
+
+    public sealed class ServerIncomingCommandResult
+    {
+        public MessageHandlingResultAction Action { get; set; } = MessageHandlingResultAction.Handled;
+
+        public FrameworkPacket Command { get; set; }
     }
 
     public sealed class ItemCodecContext
@@ -214,6 +254,10 @@ namespace Utils.Framework
         public List<IServerMessageHandler> ServerMessageHandlers { get; } = new List<IServerMessageHandler>();
 
         public List<IItemCodec> ItemCodecs { get; } = new List<IItemCodec>();
+
+        public List<IClientCommandHandler> ClientCommandHandlers { get; } = new List<IClientCommandHandler>();
+
+        public List<IServerCommandHandler> ServerCommandHandlers { get; } = new List<IServerCommandHandler>();
 
         public List<ITradeCompletionHandler> TradeCompletionHandlers { get; } = new List<ITradeCompletionHandler>();
     }

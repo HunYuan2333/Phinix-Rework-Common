@@ -43,6 +43,15 @@ namespace Utils.Framework
 
         [DataMember(Order = 8)]
         public List<FrameworkMetadataEntry> Metadata { get; set; } = new List<FrameworkMetadataEntry>();
+
+        [DataMember(Order = 9)]
+        public global::Phinix.Framework.FrameworkFlow Flow { get; set; } = global::Phinix.Framework.FrameworkFlow.Unspecified;
+
+        [DataMember(Order = 10)]
+        public global::Phinix.Framework.FrameworkCommandKind CommandKind { get; set; } = global::Phinix.Framework.FrameworkCommandKind.Unspecified;
+
+        [DataMember(Order = 11)]
+        public byte[] PayloadBytes { get; set; } = Array.Empty<byte>();
     }
 
     [DataContract]
@@ -98,5 +107,8 @@ namespace Utils.Framework
 
         [DataMember(Order = 2)]
         public List<FrameworkMetadataEntry> Metadata { get; set; } = new List<FrameworkMetadataEntry>();
+
+        [DataMember(Order = 3)]
+        public byte[] PayloadBytes { get; set; } = Array.Empty<byte>();
     }
 }
