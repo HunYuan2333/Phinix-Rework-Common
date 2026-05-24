@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 
 namespace Utils.Framework
 {
@@ -38,6 +39,127 @@ namespace Utils.Framework
     public interface IPhinixExtension
     {
         string ExtensionId { get; }
+    }
+
+    public interface IPhinixExtensionModule : IPhinixExtension
+    {
+        void Register(IExtensionComponentSink sink, ExtensionHostContext hostContext);
+    }
+
+    public interface IActivatablePhinixExtensionModule : IPhinixExtension
+    {
+        void Activate(ExtensionHostContext hostContext);
+
+        void Shutdown(ExtensionHostContext hostContext);
+    }
+
+    public interface IExtensionComponentSink
+    {
+        void AddCapabilityProvider(ICapabilityProvider capabilityProvider);
+
+        void AddMessageInterceptor(IMessageInterceptor interceptor);
+
+        void AddMessageRenderer(IMessageRenderer renderer);
+
+        void AddClientMessageHandler(IClientMessageHandler handler);
+
+        void AddServerMessageHandler(IServerMessageHandler handler);
+
+        void AddItemCodec(IItemCodec codec);
+
+        void AddClientCommandHandler(IClientCommandHandler handler);
+
+        void AddServerCommandHandler(IServerCommandHandler handler);
+
+        void AddTradeCompletionHandler(ITradeCompletionHandler handler);
+    }
+
+    public interface IExtensionStorageProvider
+    {
+        string GetStoragePath(string extensionId, string logicalName);
+    }
+
+    public sealed class FileSystemExtensionStorageProvider : IExtensionStorageProvider
+    {
+        private readonly string rootPath;
+
+        public FileSystemExtensionStorageProvider(string rootPath)
+        {
+            this.rootPath = string.IsNullOrWhiteSpace(rootPath)
+                ? Path.Combine(AppDomain.CurrentDomain.BaseDirectory ?? ".", "framework-extensions")
+                : rootPath;
+        }
+
+        public string GetStoragePath(string extensionId, string logicalName)
+        {
+            string safeExtensionId = sanitizePathPart(extensionId, "unknown-extension");
+            string safeLogicalName = sanitizePathPart(logicalName, "default");
+            string extensionDirectory = Path.Combine(rootPath, safeExtensionId);
+            Directory.CreateDirectory(extensionDirectory);
+            return Path.Combine(extensionDirectory, safeLogicalName);
+        }
+
+        private static string sanitizePathPart(string value, string fallback)
+        {
+            string candidate = string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+            foreach (char invalidChar in Path.GetInvalidFileNameChars())
+            {
+                candidate = candidate.Replace(invalidChar, '_');
+            }
+
+            return string.IsNullOrWhiteSpace(candidate) ? fallback : candidate;
+        }
+    }
+
+    public sealed class ExtensionHostContext
+    {
+        private readonly Dictionary<Type, object> services = new Dictionary<Type, object>();
+
+        public static ExtensionHostContext Empty { get; } = new ExtensionHostContext();
+
+        public string HostKind { get; set; } = "unknown";
+
+        public Action<string, LogLevel> Log { get; set; }
+
+        public Func<string> CreateMessageId { get; set; } = () => Guid.NewGuid().ToString();
+
+        public Func<DateTime> UtcNow { get; set; } = () => DateTime.UtcNow;
+
+        public IExtensionStorageProvider StorageProvider { get; set; }
+
+        public void AddService<T>(T service) where T : class
+        {
+            if (service == null) return;
+
+            services[typeof(T)] = service;
+        }
+
+        public bool TryGetService<T>(out T service) where T : class
+        {
+            if (services.TryGetValue(typeof(T), out object resolved) && resolved is T typedService)
+            {
+                service = typedService;
+                return true;
+            }
+
+            service = null;
+            return false;
+        }
+
+        public T GetRequiredService<T>() where T : class
+        {
+            if (TryGetService<T>(out T service))
+            {
+                return service;
+            }
+
+            throw new InvalidOperationException($"Required extension host service '{typeof(T).FullName}' is not available for host '{HostKind}'.");
+        }
+
+        public string GetStoragePath(string extensionId, string logicalName)
+        {
+            return StorageProvider?.GetStoragePath(extensionId, logicalName);
+        }
     }
 
     [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
@@ -240,6 +362,10 @@ namespace Utils.Framework
     public sealed class DiscoveredPhinixExtensions
     {
         public List<IPhinixExtension> Extensions { get; } = new List<IPhinixExtension>();
+
+        public List<IPhinixExtensionModule> Modules { get; } = new List<IPhinixExtensionModule>();
+
+        public List<string> Diagnostics { get; } = new List<string>();
 
         public List<string> Warnings { get; } = new List<string>();
 

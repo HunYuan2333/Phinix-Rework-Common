@@ -7,10 +7,12 @@ namespace Utils.Framework
 {
     public static class PhinixExtensionRegistry
     {
-        public static DiscoveredPhinixExtensions DiscoverExtensions()
+        public static DiscoveredPhinixExtensions DiscoverExtensions(ExtensionHostContext hostContext = null)
         {
+            hostContext = hostContext ?? ExtensionHostContext.Empty;
             DiscoveredPhinixExtensions discovered = new DiscoveredPhinixExtensions();
             HashSet<string> seenExtensionIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            ExtensionComponentSink sink = new ExtensionComponentSink(discovered);
 
             IEnumerable<Type> candidateTypes = AppDomain.CurrentDomain
                 .GetAssemblies()
@@ -18,6 +20,7 @@ namespace Utils.Framework
                 .SelectMany(getLoadableTypes)
                 .Where(type => type.IsClass && !type.IsAbstract && type.GetConstructor(Type.EmptyTypes) != null)
                 .Where(type =>
+                    typeof(IPhinixExtensionModule).IsAssignableFrom(type) ||
                     type.GetCustomAttribute<PhinixExtensionAttribute>() != null ||
                     typeof(IPhinixExtension).IsAssignableFrom(type) ||
                     typeof(ICapabilityProvider).IsAssignableFrom(type) ||
@@ -41,6 +44,31 @@ namespace Utils.Framework
                 catch (Exception exception)
                 {
                     discovered.Warnings.Add($"Failed to initialize extension type '{candidateType.FullName}': {exception.Message}");
+                    continue;
+                }
+
+                if (instance is IPhinixExtensionModule module)
+                {
+                    if (!seenExtensionIds.Add(module.ExtensionId))
+                    {
+                        discovered.Warnings.Add($"Duplicate extension ID '{module.ExtensionId}' discovered in '{candidateType.FullName}'.");
+                    }
+
+                    discovered.Extensions.Add(module);
+                    discovered.Modules.Add(module);
+
+                    try
+                    {
+                        module.Register(sink, hostContext);
+                        discovered.Diagnostics.Add(
+                            $"Framework module '{module.ExtensionId}' registered from '{candidateType.FullName}' " +
+                            $"for host '{hostContext.HostKind ?? "unknown"}'.");
+                    }
+                    catch (Exception exception)
+                    {
+                        discovered.Warnings.Add($"Failed to register extension module '{candidateType.FullName}': {exception.Message}");
+                    }
+
                     continue;
                 }
 
@@ -72,6 +100,42 @@ namespace Utils.Framework
             discovered.TradeCompletionHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
 
             return discovered;
+        }
+
+        public static void ActivateExtensions(DiscoveredPhinixExtensions discovered, ExtensionHostContext hostContext = null)
+        {
+            hostContext = hostContext ?? ExtensionHostContext.Empty;
+
+            foreach (IActivatablePhinixExtensionModule module in discovered?.Modules?.OfType<IActivatablePhinixExtensionModule>() ?? Enumerable.Empty<IActivatablePhinixExtensionModule>())
+            {
+                try
+                {
+                    module.Activate(hostContext);
+                    discovered.Diagnostics.Add($"Framework module '{module.ExtensionId}' activated for host '{hostContext.HostKind ?? "unknown"}'.");
+                }
+                catch (Exception exception)
+                {
+                    discovered.Warnings.Add($"Failed to activate extension module '{module.ExtensionId}': {exception.Message}");
+                }
+            }
+        }
+
+        public static void ShutdownExtensions(DiscoveredPhinixExtensions discovered, ExtensionHostContext hostContext = null)
+        {
+            hostContext = hostContext ?? ExtensionHostContext.Empty;
+
+            foreach (IActivatablePhinixExtensionModule module in discovered?.Modules?.OfType<IActivatablePhinixExtensionModule>() ?? Enumerable.Empty<IActivatablePhinixExtensionModule>())
+            {
+                try
+                {
+                    module.Shutdown(hostContext);
+                    discovered.Diagnostics.Add($"Framework module '{module.ExtensionId}' shut down for host '{hostContext.HostKind ?? "unknown"}'.");
+                }
+                catch (Exception exception)
+                {
+                    discovered.Warnings.Add($"Failed to shut down extension module '{module.ExtensionId}': {exception.Message}");
+                }
+            }
         }
 
         public static string[] CollectCapabilities(DiscoveredPhinixExtensions discovered)
@@ -109,6 +173,44 @@ namespace Utils.Framework
             catch (ReflectionTypeLoadException exception)
             {
                 return exception.Types.Where(type => type != null);
+            }
+        }
+
+        private sealed class ExtensionComponentSink : IExtensionComponentSink
+        {
+            private readonly DiscoveredPhinixExtensions discovered;
+
+            public ExtensionComponentSink(DiscoveredPhinixExtensions discovered)
+            {
+                this.discovered = discovered;
+            }
+
+            public void AddCapabilityProvider(ICapabilityProvider capabilityProvider) => addIfMissing(discovered.CapabilityProviders, capabilityProvider);
+
+            public void AddMessageInterceptor(IMessageInterceptor interceptor) => addIfMissing(discovered.MessageInterceptors, interceptor);
+
+            public void AddMessageRenderer(IMessageRenderer renderer) => addIfMissing(discovered.MessageRenderers, renderer);
+
+            public void AddClientMessageHandler(IClientMessageHandler handler) => addIfMissing(discovered.ClientMessageHandlers, handler);
+
+            public void AddServerMessageHandler(IServerMessageHandler handler) => addIfMissing(discovered.ServerMessageHandlers, handler);
+
+            public void AddItemCodec(IItemCodec codec) => addIfMissing(discovered.ItemCodecs, codec);
+
+            public void AddClientCommandHandler(IClientCommandHandler handler) => addIfMissing(discovered.ClientCommandHandlers, handler);
+
+            public void AddServerCommandHandler(IServerCommandHandler handler) => addIfMissing(discovered.ServerCommandHandlers, handler);
+
+            public void AddTradeCompletionHandler(ITradeCompletionHandler handler) => addIfMissing(discovered.TradeCompletionHandlers, handler);
+
+            private static void addIfMissing<T>(ICollection<T> collection, T item)
+            {
+                if (item == null || collection.Contains(item))
+                {
+                    return;
+                }
+
+                collection.Add(item);
             }
         }
     }
