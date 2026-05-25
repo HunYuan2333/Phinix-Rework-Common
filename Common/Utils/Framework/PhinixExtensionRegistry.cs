@@ -16,81 +16,135 @@ namespace Utils.Framework
             discovered.ApiRegistry = apiRegistry;
             HashSet<string> seenExtensionIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            IEnumerable<Type> candidateTypes = AppDomain.CurrentDomain
+            List<Type> candidateTypes = AppDomain.CurrentDomain
                 .GetAssemblies()
                 .Where(assembly => !assembly.IsDynamic)
                 .SelectMany(getLoadableTypes)
                 .Where(type => type.IsClass && !type.IsAbstract && type.GetConstructor(Type.EmptyTypes) != null)
-                .Where(type =>
-                    typeof(IPhinixExtensionModule).IsAssignableFrom(type) ||
-                    type.GetCustomAttribute<PhinixExtensionAttribute>() != null ||
-                    typeof(IPhinixExtension).IsAssignableFrom(type) ||
-                    typeof(ICapabilityProvider).IsAssignableFrom(type) ||
-                    typeof(IMessageInterceptor).IsAssignableFrom(type) ||
-                    typeof(IMessageRenderer).IsAssignableFrom(type) ||
-                    typeof(IClientMessageHandler).IsAssignableFrom(type) ||
-                    typeof(IServerMessageHandler).IsAssignableFrom(type) ||
-                    typeof(IClientCommandHandler).IsAssignableFrom(type) ||
-                    typeof(IServerCommandHandler).IsAssignableFrom(type) ||
-                    typeof(IItemCodec).IsAssignableFrom(type)
-                );
+                .ToList();
 
-            foreach (Type candidateType in candidateTypes)
+            List<Type> moduleTypes = candidateTypes
+                .Where(type => typeof(IPhinixExtensionModule).IsAssignableFrom(type))
+                .OrderBy(type => type.FullName, StringComparer.Ordinal)
+                .ToList();
+
+            foreach (Type moduleType in moduleTypes)
+            {
+                IPhinixExtensionModule module;
+                try
+                {
+                    module = Activator.CreateInstance(moduleType) as IPhinixExtensionModule;
+                }
+                catch (Exception exception)
+                {
+                    discovered.Warnings.Add($"Failed to initialize extension module '{moduleType.FullName}': {exception.Message}");
+                    continue;
+                }
+
+                if (module == null)
+                {
+                    continue;
+                }
+
+                ExtensionBuilder builder = new ExtensionBuilder(module.ExtensionId, hostContext, discovered, apiRegistry);
+                if (!seenExtensionIds.Add(module.ExtensionId))
+                {
+                    discovered.Warnings.Add($"Duplicate extension ID '{module.ExtensionId}' discovered in '{moduleType.FullName}'.");
+                }
+
+                discovered.Extensions.Add(module);
+                discovered.Modules.Add(module);
+
+                try
+                {
+                    module.Register(builder);
+                    discovered.Diagnostics.Add(
+                        $"Framework module '{module.ExtensionId}' registered from '{moduleType.FullName}' " +
+                        $"for host '{hostContext.HostKind ?? "unknown"}'.");
+                }
+                catch (Exception exception)
+                {
+                    discovered.Warnings.Add($"Failed to register extension module '{moduleType.FullName}': {exception.Message}");
+                }
+            }
+
+            List<Type> legacyComponentTypes = candidateTypes
+                .Where(type => !typeof(IPhinixExtensionModule).IsAssignableFrom(type))
+                .Where(isLegacyDiscoverableType)
+                .OrderBy(type => type.FullName, StringComparer.Ordinal)
+                .ToList();
+
+            foreach (Type legacyComponentType in legacyComponentTypes)
             {
                 object instance;
                 try
                 {
-                    instance = Activator.CreateInstance(candidateType);
+                    instance = Activator.CreateInstance(legacyComponentType);
                 }
                 catch (Exception exception)
                 {
-                    discovered.Warnings.Add($"Failed to initialize extension type '{candidateType.FullName}': {exception.Message}");
+                    discovered.Warnings.Add($"Failed to initialize legacy extension component '{legacyComponentType.FullName}': {exception.Message}");
                     continue;
                 }
 
-                if (instance is IPhinixExtensionModule module)
-                {
-                    ExtensionBuilder builder = new ExtensionBuilder(module.ExtensionId, hostContext, discovered, apiRegistry);
-                    if (!seenExtensionIds.Add(module.ExtensionId))
-                    {
-                        discovered.Warnings.Add($"Duplicate extension ID '{module.ExtensionId}' discovered in '{candidateType.FullName}'.");
-                    }
-
-                    discovered.Extensions.Add(module);
-                    discovered.Modules.Add(module);
-
-                    try
-                    {
-                        module.Register(builder);
-                        discovered.Diagnostics.Add(
-                            $"Framework module '{module.ExtensionId}' registered from '{candidateType.FullName}' " +
-                            $"for host '{hostContext.HostKind ?? "unknown"}'.");
-                    }
-                    catch (Exception exception)
-                    {
-                        discovered.Warnings.Add($"Failed to register extension module '{candidateType.FullName}': {exception.Message}");
-                    }
-
-                    continue;
-                }
-
+                bool registeredLegacyComponent = false;
                 if (instance is IPhinixExtension extension)
                 {
                     if (!seenExtensionIds.Add(extension.ExtensionId))
                     {
-                        discovered.Warnings.Add($"Duplicate extension ID '{extension.ExtensionId}' discovered in '{candidateType.FullName}'.");
+                        discovered.Warnings.Add($"Duplicate extension ID '{extension.ExtensionId}' discovered in '{legacyComponentType.FullName}'.");
                     }
 
                     discovered.Extensions.Add(extension);
+                    registeredLegacyComponent = true;
                 }
-                if (instance is ICapabilityProvider capabilityProvider) discovered.CapabilityProviders.Add(capabilityProvider);
-                if (instance is IMessageInterceptor interceptor) discovered.MessageInterceptors.Add(interceptor);
-                if (instance is IMessageRenderer renderer) discovered.MessageRenderers.Add(renderer);
-                if (instance is IClientMessageHandler clientHandler) discovered.ClientMessageHandlers.Add(clientHandler);
-                if (instance is IServerMessageHandler serverHandler) discovered.ServerMessageHandlers.Add(serverHandler);
-                if (instance is IClientCommandHandler clientCommandHandler) discovered.ClientCommandHandlers.Add(clientCommandHandler);
-                if (instance is IServerCommandHandler serverCommandHandler) discovered.ServerCommandHandlers.Add(serverCommandHandler);
-                if (instance is IItemCodec itemCodec) discovered.ItemCodecs.Add(itemCodec);
+                if (instance is ICapabilityProvider capabilityProvider)
+                {
+                    discovered.CapabilityProviders.Add(capabilityProvider);
+                    registeredLegacyComponent = true;
+                }
+                if (instance is IMessageInterceptor interceptor)
+                {
+                    discovered.MessageInterceptors.Add(interceptor);
+                    registeredLegacyComponent = true;
+                }
+                if (instance is IMessageRenderer renderer)
+                {
+                    discovered.MessageRenderers.Add(renderer);
+                    registeredLegacyComponent = true;
+                }
+                if (instance is IClientMessageHandler clientHandler)
+                {
+                    discovered.ClientMessageHandlers.Add(clientHandler);
+                    registeredLegacyComponent = true;
+                }
+                if (instance is IServerMessageHandler serverHandler)
+                {
+                    discovered.ServerMessageHandlers.Add(serverHandler);
+                    registeredLegacyComponent = true;
+                }
+                if (instance is IClientCommandHandler clientCommandHandler)
+                {
+                    discovered.ClientCommandHandlers.Add(clientCommandHandler);
+                    registeredLegacyComponent = true;
+                }
+                if (instance is IServerCommandHandler serverCommandHandler)
+                {
+                    discovered.ServerCommandHandlers.Add(serverCommandHandler);
+                    registeredLegacyComponent = true;
+                }
+                if (instance is IItemCodec itemCodec)
+                {
+                    discovered.ItemCodecs.Add(itemCodec);
+                    registeredLegacyComponent = true;
+                }
+
+                if (registeredLegacyComponent)
+                {
+                    discovered.Warnings.Add(
+                        $"Framework auto-discovered legacy extension component '{legacyComponentType.FullName}'. " +
+                        "Migrate it to IPhinixExtensionModule so registration stays module-first.");
+                }
             }
 
             discovered.MessageInterceptors.Sort((left, right) => left.Priority.CompareTo(right.Priority));
@@ -174,6 +228,12 @@ namespace Utils.Framework
             {
                 return exception.Types.Where(type => type != null);
             }
+        }
+
+        private static bool isLegacyDiscoverableType(Type type)
+        {
+            return type.GetCustomAttribute<PhinixExtensionAttribute>() != null ||
+                   typeof(IPhinixExtension).IsAssignableFrom(type);
         }
 
         private sealed class ExtensionBuilder : IExtensionBuilder

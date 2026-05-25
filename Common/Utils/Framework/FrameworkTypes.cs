@@ -14,9 +14,6 @@ namespace Utils.Framework
         public const string KindCommand = "command";
         public const string KindItem = "item";
         public const string SystemSenderUuid = "__phinix_system__";
-        public const string BuiltInChatMessageType = "builtin.chat.message";
-        public const string BuiltInChatHistoryRequestType = "builtin.chat.history.request";
-        public const string BuiltInChatHistorySyncCompleteType = "builtin.chat.history.sync-complete";
     }
 
     public enum FrameworkCompatibilityMode
@@ -60,6 +57,11 @@ namespace Utils.Framework
         bool TryResolve<T>(out T implementation) where T : class;
 
         IReadOnlyList<T> ResolveAll<T>() where T : class;
+    }
+
+    public interface IFrameworkServerPacketDispatcher
+    {
+        void Send(string connectionId, FrameworkPacket packet);
     }
 
     public interface IExtensionBuilder
@@ -266,6 +268,8 @@ namespace Utils.Framework
     public sealed class ExtensionHostContext
     {
         private readonly Dictionary<Type, object> services = new Dictionary<Type, object>();
+        private readonly Dictionary<string, string> options = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly List<ExtensionPersistenceRegistration> persistents = new List<ExtensionPersistenceRegistration>();
 
         public static ExtensionHostContext Empty { get; } = new ExtensionHostContext();
 
@@ -280,6 +284,8 @@ namespace Utils.Framework
         public IExtensionStorageProvider StorageProvider { get; set; }
 
         public IExtensionApiRegistry ApiRegistry { get; internal set; } = new ExtensionApiRegistry();
+
+        public IReadOnlyList<ExtensionPersistenceRegistration> Persistents => persistents;
 
         public void AddService<T>(T service) where T : class
         {
@@ -315,6 +321,52 @@ namespace Utils.Framework
             return StorageProvider?.GetStoragePath(extensionId, logicalName);
         }
 
+        public void SetOption(string key, string value)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return;
+            }
+
+            options[key] = value ?? string.Empty;
+        }
+
+        public bool TryGetOption(string key, out string value)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                value = null;
+                return false;
+            }
+
+            return options.TryGetValue(key, out value);
+        }
+
+        public int GetIntOption(string key, int defaultValue)
+        {
+            return TryGetOption(key, out string value) && int.TryParse(value, out int parsedValue)
+                ? parsedValue
+                : defaultValue;
+        }
+
+        public void RegisterPersistent(string extensionId, string logicalName, IPersistent persistent)
+        {
+            if (string.IsNullOrWhiteSpace(extensionId) || string.IsNullOrWhiteSpace(logicalName) || persistent == null)
+            {
+                return;
+            }
+
+            if (persistents.Exists(candidate =>
+                string.Equals(candidate.ExtensionId, extensionId, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(candidate.LogicalName, logicalName, StringComparison.OrdinalIgnoreCase) &&
+                ReferenceEquals(candidate.Persistent, persistent)))
+            {
+                return;
+            }
+
+            persistents.Add(new ExtensionPersistenceRegistration(extensionId, logicalName, persistent));
+        }
+
         public bool TryResolveApi<T>(out T implementation) where T : class
         {
             if (ApiRegistry != null)
@@ -330,6 +382,22 @@ namespace Utils.Framework
         {
             return ApiRegistry?.ResolveAll<T>() ?? Array.Empty<T>();
         }
+    }
+
+    public sealed class ExtensionPersistenceRegistration
+    {
+        public ExtensionPersistenceRegistration(string extensionId, string logicalName, IPersistent persistent)
+        {
+            ExtensionId = extensionId ?? string.Empty;
+            LogicalName = logicalName ?? string.Empty;
+            Persistent = persistent;
+        }
+
+        public string ExtensionId { get; }
+
+        public string LogicalName { get; }
+
+        public IPersistent Persistent { get; }
     }
 
     [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]

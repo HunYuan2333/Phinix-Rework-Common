@@ -16,7 +16,7 @@ protoc --proto_path="%PROTO_DIR%" --proto_path="%GOOGLE_PROTO_DIR%" --csharp_out
 if errorlevel 1 exit /b 1
 
 echo Compiling framework message protos
-protoc --proto_path="%PROTO_DIR%" --proto_path="%GOOGLE_PROTO_DIR%" --csharp_out="%PROTO_DIR%\Message\compiled" "%PROTO_DIR%\Message\FrameworkMessagePacket.proto" "%PROTO_DIR%\Message\BuiltInChat.proto"
+protoc --proto_path="%PROTO_DIR%" --proto_path="%GOOGLE_PROTO_DIR%" --csharp_out="%PROTO_DIR%\Message\compiled" "%PROTO_DIR%\Message\FrameworkMessagePacket.proto"
 if errorlevel 1 exit /b 1
 
 echo Compiling framework command protos

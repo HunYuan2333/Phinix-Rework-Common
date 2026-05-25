@@ -56,7 +56,7 @@
     <Compile Include="Framework\FrameworkSerialization.cs" />
     <Compile Include="Framework\FrameworkTypes.cs" />
     <Compile Include="Framework\Proto\Shared\compiled\*.cs" />
-    <Compile Include="Framework\Proto\Message\compiled\*.cs" />
+    <Compile Include="Framework\Proto\Message\compiled\FrameworkMessagePacket.cs" />
     <Compile Include="Framework\Proto\Command\compiled\*.cs" />
     <Compile Include="Framework\Proto\Item\compiled\*.cs" />
     <Compile Include="Framework\PhinixExtensionRegistry.cs" />
@@ -77,7 +77,7 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="Framework\Proto\Shared\*.proto" />
-    <Content Include="Framework\Proto\Message\*.proto" />
+    <Content Include="Framework\Proto\Message\FrameworkMessagePacket.proto" />
     <Content Include="Framework\Proto\Command\*.proto" />
     <Content Include="Framework\Proto\Item\*.proto" />
   </ItemGroup>
