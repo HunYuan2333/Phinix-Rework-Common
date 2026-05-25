@@ -30,8 +30,7 @@ namespace Utils.Framework
                     typeof(IServerMessageHandler).IsAssignableFrom(type) ||
                     typeof(IClientCommandHandler).IsAssignableFrom(type) ||
                     typeof(IServerCommandHandler).IsAssignableFrom(type) ||
-                    typeof(IItemCodec).IsAssignableFrom(type) ||
-                    typeof(ITradeCompletionHandler).IsAssignableFrom(type)
+                    typeof(IItemCodec).IsAssignableFrom(type)
                 );
 
             foreach (Type candidateType in candidateTypes)
@@ -89,7 +88,6 @@ namespace Utils.Framework
                 if (instance is IClientCommandHandler clientCommandHandler) discovered.ClientCommandHandlers.Add(clientCommandHandler);
                 if (instance is IServerCommandHandler serverCommandHandler) discovered.ServerCommandHandlers.Add(serverCommandHandler);
                 if (instance is IItemCodec itemCodec) discovered.ItemCodecs.Add(itemCodec);
-                if (instance is ITradeCompletionHandler tradeCompletionHandler) discovered.TradeCompletionHandlers.Add(tradeCompletionHandler);
             }
 
             discovered.MessageInterceptors.Sort((left, right) => left.Priority.CompareTo(right.Priority));
@@ -97,7 +95,6 @@ namespace Utils.Framework
             discovered.ServerMessageHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
             discovered.ClientCommandHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
             discovered.ServerCommandHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
-            discovered.TradeCompletionHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
 
             return discovered;
         }
@@ -200,8 +197,6 @@ namespace Utils.Framework
             public void AddClientCommandHandler(IClientCommandHandler handler) => addIfMissing(discovered.ClientCommandHandlers, handler);
 
             public void AddServerCommandHandler(IServerCommandHandler handler) => addIfMissing(discovered.ServerCommandHandlers, handler);
-
-            public void AddTradeCompletionHandler(ITradeCompletionHandler handler) => addIfMissing(discovered.TradeCompletionHandlers, handler);
 
             private static void addIfMissing<T>(ICollection<T> collection, T item)
             {

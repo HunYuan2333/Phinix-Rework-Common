@@ -70,8 +70,6 @@ namespace Utils.Framework
         void AddClientCommandHandler(IClientCommandHandler handler);
 
         void AddServerCommandHandler(IServerCommandHandler handler);
-
-        void AddTradeCompletionHandler(ITradeCompletionHandler handler);
     }
 
     public interface IExtensionStorageProvider
@@ -249,17 +247,6 @@ namespace Utils.Framework
         ServerIncomingCommandResult HandleIncomingCommand(FrameworkPacket command, ServerFrameworkContext context);
     }
 
-    public interface ITradeCompletionHandler
-    {
-        string HandlerId { get; }
-
-        int Priority { get; }
-
-        bool CanHandle(TradeCompletionContext context);
-
-        void Handle(TradeCompletionContext context);
-    }
-
     public sealed class ClientOutgoingMessageResult
     {
         public MessageHandlingResultAction Action { get; set; } = MessageHandlingResultAction.Handled;
@@ -302,17 +289,6 @@ namespace Utils.Framework
     public sealed class ItemCodecContext
     {
         public FrameworkCompatibilityMode CompatibilityMode { get; set; }
-
-        public Action<string, LogLevel> Log { get; set; }
-    }
-
-    public sealed class TradeCompletionContext
-    {
-        public string TradeId { get; set; }
-
-        public string OtherPartyUuid { get; set; }
-
-        public IReadOnlyCollection<FrameworkItemPayload> Items { get; set; } = Array.Empty<FrameworkItemPayload>();
 
         public Action<string, LogLevel> Log { get; set; }
     }
@@ -385,6 +361,5 @@ namespace Utils.Framework
 
         public List<IServerCommandHandler> ServerCommandHandlers { get; } = new List<IServerCommandHandler>();
 
-        public List<ITradeCompletionHandler> TradeCompletionHandlers { get; } = new List<ITradeCompletionHandler>();
     }
 }

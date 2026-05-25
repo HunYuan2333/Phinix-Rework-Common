@@ -54,7 +54,6 @@
   <ItemGroup>
     <Compile Include="Framework\FrameworkPacket.cs" />
     <Compile Include="Framework\FrameworkSerialization.cs" />
-    <Compile Include="Framework\FrameworkTradeContracts.cs" />
     <Compile Include="Framework\FrameworkTypes.cs" />
     <Compile Include="Framework\Proto\Shared\compiled\*.cs" />
     <Compile Include="Framework\Proto\Message\compiled\*.cs" />

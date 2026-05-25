@@ -1,8 +1,8 @@
-using System;
 using System.Collections.Generic;
 using System.Runtime.Serialization;
+using Utils.Framework;
 
-namespace Utils.Framework
+namespace Phinix.TradeExtension
 {
     public static class FrameworkTradeProtocol
     {
