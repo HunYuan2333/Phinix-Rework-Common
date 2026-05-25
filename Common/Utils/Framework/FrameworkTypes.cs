@@ -43,7 +43,7 @@ namespace Utils.Framework
 
     public interface IPhinixExtensionModule : IPhinixExtension
     {
-        void Register(IExtensionComponentSink sink, ExtensionHostContext hostContext);
+        void Register(IExtensionBuilder builder);
     }
 
     public interface IActivatablePhinixExtensionModule : IPhinixExtension
@@ -53,8 +53,23 @@ namespace Utils.Framework
         void Shutdown(ExtensionHostContext hostContext);
     }
 
-    public interface IExtensionComponentSink
+    public interface IExtensionApiRegistry
     {
+        void RegisterApi<T>(string extensionId, T implementation) where T : class;
+
+        bool TryResolve<T>(out T implementation) where T : class;
+
+        IReadOnlyList<T> ResolveAll<T>() where T : class;
+    }
+
+    public interface IExtensionBuilder
+    {
+        string ExtensionId { get; }
+
+        ExtensionHostContext HostContext { get; }
+
+        IExtensionApiRegistry ApiRegistry { get; }
+
         void AddCapabilityProvider(ICapabilityProvider capabilityProvider);
 
         void AddMessageInterceptor(IMessageInterceptor interceptor);
@@ -70,6 +85,145 @@ namespace Utils.Framework
         void AddClientCommandHandler(IClientCommandHandler handler);
 
         void AddServerCommandHandler(IServerCommandHandler handler);
+
+        void RegisterApi<T>(T implementation) where T : class;
+
+        bool TryResolveApi<T>(out T implementation) where T : class;
+
+        IReadOnlyList<T> ResolveApis<T>() where T : class;
+    }
+
+    public sealed class ExtensionApiRegistry : IExtensionApiRegistry
+    {
+        private readonly Dictionary<Type, List<ApiRegistration>> registrations = new Dictionary<Type, List<ApiRegistration>>();
+        private readonly object syncRoot = new object();
+
+        public void RegisterApi<T>(string extensionId, T implementation) where T : class
+        {
+            registerApi(typeof(T), extensionId, implementation);
+        }
+
+        public bool TryResolve<T>(out T implementation) where T : class
+        {
+            lock (syncRoot)
+            {
+                if (registrations.TryGetValue(typeof(T), out List<ApiRegistration> providers) && providers.Count > 0)
+                {
+                    implementation = providers[0].Implementation as T;
+                    return implementation != null;
+                }
+            }
+
+            implementation = null;
+            return false;
+        }
+
+        public IReadOnlyList<T> ResolveAll<T>() where T : class
+        {
+            List<T> resolved = new List<T>();
+            lock (syncRoot)
+            {
+                if (!registrations.TryGetValue(typeof(T), out List<ApiRegistration> providers))
+                {
+                    return resolved;
+                }
+
+                foreach (ApiRegistration provider in providers)
+                {
+                    if (provider.Implementation is T typedImplementation)
+                    {
+                        resolved.Add(typedImplementation);
+                    }
+                }
+            }
+
+            return resolved;
+        }
+
+        internal ExtensionApiRegistrationResult TryRegisterApi<T>(string extensionId, T implementation) where T : class
+        {
+            return registerApi(typeof(T), extensionId, implementation);
+        }
+
+        private ExtensionApiRegistrationResult registerApi(Type apiType, string extensionId, object implementation)
+        {
+            if (apiType == null)
+            {
+                return ExtensionApiRegistrationResult.CreateFailure("Framework API registration skipped because the API type was null.");
+            }
+
+            if (implementation == null)
+            {
+                return ExtensionApiRegistrationResult.CreateFailure($"Framework API registration skipped for '{apiType.FullName}' because the implementation was null.");
+            }
+
+            lock (syncRoot)
+            {
+                if (!registrations.TryGetValue(apiType, out List<ApiRegistration> providers))
+                {
+                    providers = new List<ApiRegistration>();
+                    registrations[apiType] = providers;
+                }
+
+                if (providers.Exists(candidate =>
+                    string.Equals(candidate.ExtensionId, extensionId, StringComparison.OrdinalIgnoreCase) &&
+                    ReferenceEquals(candidate.Implementation, implementation)))
+                {
+                    return ExtensionApiRegistrationResult.CreateFailure(
+                        $"Framework API '{apiType.FullName}' from extension '{extensionId}' was already registered.");
+                }
+
+                providers.Add(new ApiRegistration(extensionId, implementation));
+                if (providers.Count > 1)
+                {
+                    return ExtensionApiRegistrationResult.CreateSuccess(
+                        $"Framework API '{apiType.FullName}' registered from extension '{extensionId}'.",
+                        $"Framework API '{apiType.FullName}' now has {providers.Count} providers. Resolution will prefer the first registered provider.");
+                }
+
+                return ExtensionApiRegistrationResult.CreateSuccess(
+                    $"Framework API '{apiType.FullName}' registered from extension '{extensionId}'.");
+            }
+        }
+
+        private sealed class ApiRegistration
+        {
+            public ApiRegistration(string extensionId, object implementation)
+            {
+                ExtensionId = extensionId ?? string.Empty;
+                Implementation = implementation;
+            }
+
+            public string ExtensionId { get; }
+
+            public object Implementation { get; }
+        }
+    }
+
+    internal sealed class ExtensionApiRegistrationResult
+    {
+        private ExtensionApiRegistrationResult(bool success, string diagnostic, string warning)
+        {
+            Success = success;
+            Diagnostic = diagnostic;
+            Warning = warning;
+        }
+
+        public bool Success { get; }
+
+        public string Diagnostic { get; }
+
+        public string Warning { get; }
+
+        public static ExtensionApiRegistrationResult CreateSuccess(string diagnostic, string warning = null)
+        {
+            return new ExtensionApiRegistrationResult(true, diagnostic, warning);
+        }
+
+        public static ExtensionApiRegistrationResult CreateFailure(string warning)
+        {
+            return new ExtensionApiRegistrationResult(false, null, warning);
+        }
     }
 
     public interface IExtensionStorageProvider
@@ -125,6 +279,8 @@ namespace Utils.Framework
 
         public IExtensionStorageProvider StorageProvider { get; set; }
 
+        public IExtensionApiRegistry ApiRegistry { get; internal set; } = new ExtensionApiRegistry();
+
         public void AddService<T>(T service) where T : class
         {
             if (service == null) return;
@@ -157,6 +313,22 @@ namespace Utils.Framework
         public string GetStoragePath(string extensionId, string logicalName)
         {
             return StorageProvider?.GetStoragePath(extensionId, logicalName);
+        }
+
+        public bool TryResolveApi<T>(out T implementation) where T : class
+        {
+            if (ApiRegistry != null)
+            {
+                return ApiRegistry.TryResolve(out implementation);
+            }
+
+            implementation = null;
+            return false;
+        }
+
+        public IReadOnlyList<T> ResolveApis<T>() where T : class
+        {
+            return ApiRegistry?.ResolveAll<T>() ?? Array.Empty<T>();
         }
     }
 
@@ -337,6 +509,8 @@ namespace Utils.Framework
 
     public sealed class DiscoveredPhinixExtensions
     {
+        public IExtensionApiRegistry ApiRegistry { get; internal set; } = new ExtensionApiRegistry();
+
         public List<IPhinixExtension> Extensions { get; } = new List<IPhinixExtension>();
 
         public List<IPhinixExtensionModule> Modules { get; } = new List<IPhinixExtensionModule>();

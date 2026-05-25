@@ -11,8 +11,10 @@ namespace Utils.Framework
         {
             hostContext = hostContext ?? ExtensionHostContext.Empty;
             DiscoveredPhinixExtensions discovered = new DiscoveredPhinixExtensions();
+            ExtensionApiRegistry apiRegistry = hostContext.ApiRegistry as ExtensionApiRegistry ?? new ExtensionApiRegistry();
+            hostContext.ApiRegistry = apiRegistry;
+            discovered.ApiRegistry = apiRegistry;
             HashSet<string> seenExtensionIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            ExtensionComponentSink sink = new ExtensionComponentSink(discovered);
 
             IEnumerable<Type> candidateTypes = AppDomain.CurrentDomain
                 .GetAssemblies()
@@ -48,6 +50,7 @@ namespace Utils.Framework
 
                 if (instance is IPhinixExtensionModule module)
                 {
+                    ExtensionBuilder builder = new ExtensionBuilder(module.ExtensionId, hostContext, discovered, apiRegistry);
                     if (!seenExtensionIds.Add(module.ExtensionId))
                     {
                         discovered.Warnings.Add($"Duplicate extension ID '{module.ExtensionId}' discovered in '{candidateType.FullName}'.");
@@ -58,7 +61,7 @@ namespace Utils.Framework
 
                     try
                     {
-                        module.Register(sink, hostContext);
+                        module.Register(builder);
                         discovered.Diagnostics.Add(
                             $"Framework module '{module.ExtensionId}' registered from '{candidateType.FullName}' " +
                             $"for host '{hostContext.HostKind ?? "unknown"}'.");
@@ -173,14 +176,26 @@ namespace Utils.Framework
             }
         }
 
-        private sealed class ExtensionComponentSink : IExtensionComponentSink
+        private sealed class ExtensionBuilder : IExtensionBuilder
         {
+            private readonly string extensionId;
+            private readonly ExtensionHostContext hostContext;
             private readonly DiscoveredPhinixExtensions discovered;
+            private readonly ExtensionApiRegistry apiRegistry;
 
-            public ExtensionComponentSink(DiscoveredPhinixExtensions discovered)
+            public ExtensionBuilder(string extensionId, ExtensionHostContext hostContext, DiscoveredPhinixExtensions discovered, ExtensionApiRegistry apiRegistry)
             {
+                this.extensionId = extensionId ?? string.Empty;
+                this.hostContext = hostContext ?? ExtensionHostContext.Empty;
                 this.discovered = discovered;
+                this.apiRegistry = apiRegistry ?? new ExtensionApiRegistry();
             }
+
+            public string ExtensionId => extensionId;
+
+            public ExtensionHostContext HostContext => hostContext;
+
+            public IExtensionApiRegistry ApiRegistry => apiRegistry;
 
             public void AddCapabilityProvider(ICapabilityProvider capabilityProvider) => addIfMissing(discovered.CapabilityProviders, capabilityProvider);
 
@@ -197,6 +212,30 @@ namespace Utils.Framework
             public void AddClientCommandHandler(IClientCommandHandler handler) => addIfMissing(discovered.ClientCommandHandlers, handler);
 
             public void AddServerCommandHandler(IServerCommandHandler handler) => addIfMissing(discovered.ServerCommandHandlers, handler);
+
+            public void RegisterApi<T>(T implementation) where T : class
+            {
+                ExtensionApiRegistrationResult result = apiRegistry.TryRegisterApi(extensionId, implementation);
+                if (!string.IsNullOrEmpty(result.Diagnostic))
+                {
+                    discovered.Diagnostics.Add(result.Diagnostic);
+                }
+
+                if (!string.IsNullOrEmpty(result.Warning))
+                {
+                    discovered.Warnings.Add(result.Warning);
+                }
+            }
+
+            public bool TryResolveApi<T>(out T implementation) where T : class
+            {
+                return apiRegistry.TryResolve(out implementation);
+            }
+
+            public IReadOnlyList<T> ResolveApis<T>() where T : class
+            {
+                return apiRegistry.ResolveAll<T>();
+            }
 
             private static void addIfMissing<T>(ICollection<T> collection, T item)
             {
