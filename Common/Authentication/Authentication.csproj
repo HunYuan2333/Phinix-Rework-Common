@@ -1,79 +1,19 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
-    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <ProjectGuid>{E983D5C7-A573-44E4-A8BB-D5A9D78EA538}</ProjectGuid>
     <OutputType>Library</OutputType>
-    <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>Authentication</RootNamespace>
     <AssemblyName>Authentication</AssemblyName>
-    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
-    <FileAlignment>512</FileAlignment>
+    <TargetFrameworks>net472;net10.0</TargetFrameworks>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <DebugSymbols>true</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>false</Optimize>
-    <OutputPath>bin\Debug\</OutputPath>
-    <DefineConstants>DEBUG;TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <DebugType>pdbonly</DebugType>
-    <Optimize>true</Optimize>
-    <OutputPath>bin\Release\</OutputPath>
-    <DefineConstants>TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-  </PropertyGroup>
+
   <ItemGroup>
-    <Reference Include="mscorlib" />
-    <Reference Include="System.Memory, Version=4.0.1.1, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51">
-      <HintPath>..\..\.nuget\System.Memory.4.5.3\lib\netstandard2.0\System.Memory.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
-    <Reference Include="System.Runtime.CompilerServices.Unsafe, Version=4.0.4.1, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a">
-      <HintPath>..\..\.nuget\System.Runtime.CompilerServices.Unsafe.4.5.2\lib\netstandard2.0\System.Runtime.CompilerServices.Unsafe.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
-    <Reference Include="System" />
-    <Reference Include="System.Core" />
-    <Reference Include="System.Xml" />
+    <ProjectReference Include="..\..\Dependencies\protobuf\csharp\src\Google.Protobuf\Google.Protobuf.csproj" />
+    <ProjectReference Include="..\Connections\Connections.csproj" />
+    <ProjectReference Include="..\Utils\Utils.csproj" />
   </ItemGroup>
-  <ItemGroup>
-    <Compile Include="AuthenticationEventArgs.cs" />
-    <Compile Include="Authenticator.cs" />
-    <Compile Include="ClientAuthenticator.cs" />
-    <Compile Include="Credentials\compiled\Credential.cs" />
-    <Compile Include="Credentials\compiled\CredentialStore.cs" />
-    <Compile Include="Packets\compiled\AuthenticatePacket.cs" />
-    <Compile Include="Packets\compiled\AuthResponsePacket.cs" />
-    <Compile Include="Packets\compiled\AuthTypes.cs" />
-    <Compile Include="Packets\compiled\AuthFailureReason.cs" />
-    <Compile Include="Packets\compiled\ExtendSessionPacket.cs" />
-    <Compile Include="Packets\compiled\ExtendSessionResponsePacket.cs" />
-    <Compile Include="Packets\compiled\HelloPacket.cs" />
-    <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="ServerAuthenticator.cs" />
-    <Compile Include="Session.cs" />
-  </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\..\Dependencies\protobuf\csharp\src\Google.Protobuf\Google.Protobuf.csproj">
-      <Project>{d5bbfa59-db31-40f8-a8bf-7333be984316}</Project>
-      <Name>Google.Protobuf</Name>
-    </ProjectReference>
-    <ProjectReference Include="..\Connections\Connections.csproj">
-      <Project>{38CB6BED-E751-42FE-A847-C0DDD482AC62}</Project>
-      <Name>Connections</Name>
-    </ProjectReference>
-    <ProjectReference Include="..\Utils\Utils.csproj">
-      <Project>{b6ff1583-c75a-42c1-9b75-2b16215a0cf7}</Project>
-      <Name>Utils</Name>
-    </ProjectReference>
-  </ItemGroup>
+
   <ItemGroup>
     <None Include="compile-proto.bat" />
     <Content Include="compile-proto.sh" />
@@ -87,8 +27,8 @@
     <Content Include="Packets\ExtendSessionResponsePacket.proto" />
     <Content Include="Packets\HelloPacket.proto" />
   </ItemGroup>
-  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <Target Name="BeforeBuild" Condition="'$(OS)' == 'Windows_NT' and Exists('$(ProjectDir)compile-proto.bat')">
-    <Exec Command="call &quot;$(ProjectDir)compile-proto.bat&quot;" />
+
+  <Target Name="BeforeBuild" Condition="'$(OS)' == 'Windows_NT' and Exists('$(MSBuildProjectDirectory)\compile-proto.bat')">
+    <Exec Command="call &quot;$(MSBuildProjectDirectory)\compile-proto.bat&quot;" />
   </Target>
 </Project>

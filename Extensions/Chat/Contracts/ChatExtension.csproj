@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <ProjectGuid>{7B7D7B5F-D806-4A6B-B1AB-2D6EA7B4D5F4}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Phinix.ChatExtension</RootNamespace>
+    <AssemblyName>ChatExtension</AssemblyName>
+    <TargetFrameworks>net472;net10.0</TargetFrameworks>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Dependencies\protobuf\csharp\src\Google.Protobuf\Google.Protobuf.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Proto\Message\BuiltInChat.proto" />
+  </ItemGroup>
+</Project>

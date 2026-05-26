@@ -1,93 +1,31 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
-    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <ProjectGuid>{B6FF1583-C75A-42C1-9B75-2B16215A0CF7}</ProjectGuid>
     <OutputType>Library</OutputType>
-    <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>Utils</RootNamespace>
     <AssemblyName>Utils</AssemblyName>
-    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
-    <FileAlignment>512</FileAlignment>
+    <TargetFrameworks>net472;net10.0</TargetFrameworks>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <PlatformTarget>AnyCPU</PlatformTarget>
-    <DebugSymbols>true</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>false</Optimize>
-    <OutputPath>bin\Debug\</OutputPath>
-    <DefineConstants>DEBUG;TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <PlatformTarget>AnyCPU</PlatformTarget>
-    <DebugType>pdbonly</DebugType>
-    <Optimize>true</Optimize>
-    <OutputPath>bin\Release\</OutputPath>
-    <DefineConstants>TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-  </PropertyGroup>
+
   <ItemGroup>
-    <Reference Include="mscorlib" />
-    <Reference Include="Pastel, Version=1.3.1.0, Culture=neutral, PublicKeyToken=null">
-      <HintPath>..\..\.nuget\Pastel.1.3.1\lib\netstandard2.0\Pastel.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
-    <Reference Include="System.Memory, Version=4.0.1.1, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51">
-      <HintPath>..\..\.nuget\System.Memory.4.5.3\lib\netstandard2.0\System.Memory.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
-    <Reference Include="System.Runtime.CompilerServices.Unsafe, Version=4.0.4.1, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a">
-      <HintPath>..\..\.nuget\System.Runtime.CompilerServices.Unsafe.4.5.2\lib\netstandard2.0\System.Runtime.CompilerServices.Unsafe.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
-    <Reference Include="System" />
-    <Reference Include="System.Core" />
-    <Reference Include="System.Drawing" />
-    <Reference Include="System.Runtime.Serialization" />
-    <Reference Include="System.Xml" />
+    <ProjectReference Include="..\..\Dependencies\protobuf\csharp\src\Google.Protobuf\Google.Protobuf.csproj" />
   </ItemGroup>
-  <ItemGroup>
-    <Compile Include="Framework\FrameworkPacket.cs" />
-    <Compile Include="Framework\FrameworkSerialization.cs" />
-    <Compile Include="Framework\FrameworkTypes.cs" />
-    <Compile Include="Framework\Proto\Shared\compiled\*.cs" />
-    <Compile Include="Framework\Proto\Message\compiled\FrameworkMessagePacket.cs" />
-    <Compile Include="Framework\Proto\Command\compiled\*.cs" />
-    <Compile Include="Framework\Proto\Item\compiled\*.cs" />
-    <Compile Include="Framework\PhinixExtensionRegistry.cs" />
-    <Compile Include="IPersistent.cs" />
-    <Compile Include="LogEventArgs.cs" />
-    <Compile Include="ILoggable.cs" />
-    <Compile Include="LogLevel.cs" />
-    <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="ProtobufPacketHelper.cs" />
-    <Compile Include="TextHelper.cs" />
-    <Compile Include="TypeUrl.cs" />
-  </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\..\Dependencies\protobuf\csharp\src\Google.Protobuf\Google.Protobuf.csproj">
-      <Project>{d5bbfa59-db31-40f8-a8bf-7333be984316}</Project>
-      <Name>Google.Protobuf</Name>
-    </ProjectReference>
-  </ItemGroup>
+
   <ItemGroup>
     <Content Include="Framework\Proto\Shared\*.proto" />
     <Content Include="Framework\Proto\Message\FrameworkMessagePacket.proto" />
     <Content Include="Framework\Proto\Command\*.proto" />
     <Content Include="Framework\Proto\Item\*.proto" />
   </ItemGroup>
+
   <ItemGroup>
     <None Include="compile-proto.bat" />
     <None Include="compile-proto.sh" />
     <None Include="packages.config" />
   </ItemGroup>
-  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <Target Name="BeforeBuild" Condition="'$(OS)' == 'Windows_NT' and Exists('$(ProjectDir)compile-proto.bat')">
-    <Exec Command="call &quot;$(ProjectDir)compile-proto.bat&quot;" />
+
+  <Target Name="BeforeBuild" Condition="'$(OS)' == 'Windows_NT' and Exists('$(MSBuildProjectDirectory)\compile-proto.bat')">
+    <Exec Command="call &quot;$(MSBuildProjectDirectory)\compile-proto.bat&quot;" />
   </Target>
 </Project>

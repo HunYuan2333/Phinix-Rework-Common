@@ -18,7 +18,7 @@ namespace Utils.Framework
 
             List<Type> candidateTypes = AppDomain.CurrentDomain
                 .GetAssemblies()
-                .Where(assembly => !assembly.IsDynamic)
+                .Where(isCandidateExtensionAssembly)
                 .SelectMany(getLoadableTypes)
                 .Where(type => type.IsClass && !type.IsAbstract && type.GetConstructor(Type.EmptyTypes) != null)
                 .ToList();
@@ -227,6 +227,46 @@ namespace Utils.Framework
             catch (ReflectionTypeLoadException exception)
             {
                 return exception.Types.Where(type => type != null);
+            }
+        }
+
+        private static bool isCandidateExtensionAssembly(Assembly assembly)
+        {
+            if (assembly == null || assembly.IsDynamic)
+            {
+                return false;
+            }
+
+            string assemblyName = assembly.GetName().Name;
+            if (string.IsNullOrEmpty(assemblyName))
+            {
+                return false;
+            }
+
+            if (assembly == typeof(PhinixExtensionRegistry).Assembly)
+            {
+                return true;
+            }
+
+            if (assemblyName.StartsWith("System.", StringComparison.Ordinal) ||
+                assemblyName.StartsWith("Microsoft.", StringComparison.Ordinal) ||
+                assemblyName.StartsWith("runtime.", StringComparison.OrdinalIgnoreCase) ||
+                assemblyName.StartsWith("mscorlib", StringComparison.OrdinalIgnoreCase) ||
+                assemblyName.StartsWith("netstandard", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            try
+            {
+                string frameworkAssemblyName = typeof(IPhinixExtensionModule).Assembly.GetName().Name;
+                return assembly
+                    .GetReferencedAssemblies()
+                    .Any(reference => string.Equals(reference.Name, frameworkAssemblyName, StringComparison.OrdinalIgnoreCase));
+            }
+            catch
+            {
+                return false;
             }
         }
 
