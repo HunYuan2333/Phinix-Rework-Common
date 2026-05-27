@@ -121,6 +121,19 @@ namespace Utils.Framework
                 if (instance is IServerMessageHandler serverHandler)
                 {
                     discovered.ServerMessageHandlers.Add(serverHandler);
+                    if (instance is IServerDefaultMessageHandler defaultMessageHandler)
+                    {
+                        discovered.ServerDefaultMessageHandlers.Add(defaultMessageHandler);
+                    }
+                    else
+                    {
+                        discovered.ServerDefaultMessageHandlers.Add(new LegacyServerDefaultMessageHandlerAdapter(serverHandler));
+                    }
+                    registeredLegacyComponent = true;
+                }
+                if (instance is IServerMessageObserver messageObserver)
+                {
+                    discovered.ServerMessageObservers.Add(messageObserver);
                     registeredLegacyComponent = true;
                 }
                 if (instance is IClientCommandHandler clientCommandHandler)
@@ -131,6 +144,34 @@ namespace Utils.Framework
                 if (instance is IServerCommandHandler serverCommandHandler)
                 {
                     discovered.ServerCommandHandlers.Add(serverCommandHandler);
+                    if (instance is IServerDefaultCommandHandler defaultCommandHandler)
+                    {
+                        discovered.ServerDefaultCommandHandlers.Add(defaultCommandHandler);
+                    }
+                    else
+                    {
+                        discovered.ServerDefaultCommandHandlers.Add(new LegacyServerDefaultCommandHandlerAdapter(serverCommandHandler));
+                    }
+                    registeredLegacyComponent = true;
+                }
+                if (instance is IServerCommandObserver commandObserver)
+                {
+                    discovered.ServerCommandObservers.Add(commandObserver);
+                    registeredLegacyComponent = true;
+                }
+                if (instance is IServerInboundMessageInterceptor inboundMessageInterceptor)
+                {
+                    discovered.ServerInboundMessageInterceptors.Add(inboundMessageInterceptor);
+                    registeredLegacyComponent = true;
+                }
+                if (instance is IServerInboundCommandInterceptor inboundCommandInterceptor)
+                {
+                    discovered.ServerInboundCommandInterceptors.Add(inboundCommandInterceptor);
+                    registeredLegacyComponent = true;
+                }
+                if (instance is IServerOutboundPacketInterceptor outboundPacketInterceptor)
+                {
+                    discovered.ServerOutboundPacketInterceptors.Add(outboundPacketInterceptor);
                     registeredLegacyComponent = true;
                 }
                 if (instance is IItemCodec itemCodec)
@@ -150,8 +191,15 @@ namespace Utils.Framework
             discovered.MessageInterceptors.Sort((left, right) => left.Priority.CompareTo(right.Priority));
             discovered.ClientMessageHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
             discovered.ServerMessageHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
+            discovered.ServerInboundMessageInterceptors.Sort((left, right) => left.Priority.CompareTo(right.Priority));
+            discovered.ServerDefaultMessageHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
+            discovered.ServerMessageObservers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
             discovered.ClientCommandHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
             discovered.ServerCommandHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
+            discovered.ServerInboundCommandInterceptors.Sort((left, right) => left.Priority.CompareTo(right.Priority));
+            discovered.ServerDefaultCommandHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
+            discovered.ServerCommandObservers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
+            discovered.ServerOutboundPacketInterceptors.Sort((left, right) => left.Priority.CompareTo(right.Priority));
 
             return discovered;
         }
@@ -199,7 +247,8 @@ namespace Utils.Framework
                 "core.framework.v2",
                 "core.message-pipeline",
                 "core.command-pipeline",
-                "core.item-pipeline"
+                "core.item-pipeline",
+                "core.outbound-pipeline"
             };
 
             foreach (ICapabilityProvider capabilityProvider in discovered.CapabilityProviders)
@@ -305,13 +354,57 @@ namespace Utils.Framework
 
             public void AddClientMessageHandler(IClientMessageHandler handler) => addIfMissing(discovered.ClientMessageHandlers, handler);
 
-            public void AddServerMessageHandler(IServerMessageHandler handler) => addIfMissing(discovered.ServerMessageHandlers, handler);
+            public void AddServerMessageHandler(IServerMessageHandler handler)
+            {
+                addIfMissing(discovered.ServerMessageHandlers, handler);
+                if (handler is IServerDefaultMessageHandler defaultHandler)
+                {
+                    addIfMissing(discovered.ServerDefaultMessageHandlers, defaultHandler);
+                }
+                else
+                {
+                    addIfMissing(discovered.ServerDefaultMessageHandlers, new LegacyServerDefaultMessageHandlerAdapter(handler));
+                }
+            }
+
+            public void AddServerInboundMessageInterceptor(IServerInboundMessageInterceptor interceptor) => addIfMissing(discovered.ServerInboundMessageInterceptors, interceptor);
+
+            public void AddServerDefaultMessageHandler(IServerDefaultMessageHandler handler)
+            {
+                addIfMissing(discovered.ServerDefaultMessageHandlers, handler);
+                addIfMissing(discovered.ServerMessageHandlers, handler);
+            }
+
+            public void AddServerMessageObserver(IServerMessageObserver observer) => addIfMissing(discovered.ServerMessageObservers, observer);
 
             public void AddItemCodec(IItemCodec codec) => addIfMissing(discovered.ItemCodecs, codec);
 
             public void AddClientCommandHandler(IClientCommandHandler handler) => addIfMissing(discovered.ClientCommandHandlers, handler);
 
-            public void AddServerCommandHandler(IServerCommandHandler handler) => addIfMissing(discovered.ServerCommandHandlers, handler);
+            public void AddServerCommandHandler(IServerCommandHandler handler)
+            {
+                addIfMissing(discovered.ServerCommandHandlers, handler);
+                if (handler is IServerDefaultCommandHandler defaultHandler)
+                {
+                    addIfMissing(discovered.ServerDefaultCommandHandlers, defaultHandler);
+                }
+                else
+                {
+                    addIfMissing(discovered.ServerDefaultCommandHandlers, new LegacyServerDefaultCommandHandlerAdapter(handler));
+                }
+            }
+
+            public void AddServerInboundCommandInterceptor(IServerInboundCommandInterceptor interceptor) => addIfMissing(discovered.ServerInboundCommandInterceptors, interceptor);
+
+            public void AddServerDefaultCommandHandler(IServerDefaultCommandHandler handler)
+            {
+                addIfMissing(discovered.ServerDefaultCommandHandlers, handler);
+                addIfMissing(discovered.ServerCommandHandlers, handler);
+            }
+
+            public void AddServerCommandObserver(IServerCommandObserver observer) => addIfMissing(discovered.ServerCommandObservers, observer);
+
+            public void AddServerOutboundPacketInterceptor(IServerOutboundPacketInterceptor interceptor) => addIfMissing(discovered.ServerOutboundPacketInterceptors, interceptor);
 
             public void RegisterApi<T>(T implementation) where T : class
             {
@@ -346,6 +439,38 @@ namespace Utils.Framework
 
                 collection.Add(item);
             }
+        }
+
+        private sealed class LegacyServerDefaultMessageHandlerAdapter : IServerDefaultMessageHandler
+        {
+            private readonly IServerMessageHandler handler;
+
+            public LegacyServerDefaultMessageHandlerAdapter(IServerMessageHandler handler)
+            {
+                this.handler = handler;
+            }
+
+            public int Priority => handler.Priority;
+
+            public bool CanHandleIncomingMessage(FrameworkPacket message) => handler.CanHandleIncomingMessage(message);
+
+            public ServerIncomingMessageResult HandleIncomingMessage(FrameworkPacket message, ServerFrameworkContext context) => handler.HandleIncomingMessage(message, context);
+        }
+
+        private sealed class LegacyServerDefaultCommandHandlerAdapter : IServerDefaultCommandHandler
+        {
+            private readonly IServerCommandHandler handler;
+
+            public LegacyServerDefaultCommandHandlerAdapter(IServerCommandHandler handler)
+            {
+                this.handler = handler;
+            }
+
+            public int Priority => handler.Priority;
+
+            public bool CanHandleIncomingCommand(FrameworkPacket command) => handler.CanHandleIncomingCommand(command);
+
+            public ServerIncomingCommandResult HandleIncomingCommand(FrameworkPacket command, ServerFrameworkContext context) => handler.HandleIncomingCommand(command, context);
         }
     }
 }

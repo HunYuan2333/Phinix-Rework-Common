@@ -10,9 +10,17 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\Dependencies\protobuf\csharp\src\Google.Protobuf\Google.Protobuf.csproj" />
+    <ProjectReference Include="..\..\..\Client\ClientExtensionAbstractions\ClientExtensionAbstractions.csproj" />
+    <ProjectReference Include="..\..\..\Common\UserManagement\UserManagement.csproj" />
+    <ProjectReference Include="..\..\..\Common\Utils\Utils.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <Content Include="Proto\Message\BuiltInChat.proto" />
   </ItemGroup>
+
+  <Target Name="CopyToAssemblies" AfterTargets="Build" Condition="'$(TargetFramework)' == 'net472'">
+    <MakeDir Directories="$(SolutionDir)\Client\Common\Assemblies" />
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFiles="$(SolutionDir)\Client\Common\Assemblies\08-ChatExtension.dll" />
+  </Target>
 </Project>

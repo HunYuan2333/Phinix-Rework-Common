@@ -4,6 +4,11 @@ using Utils.Framework;
 
 namespace Phinix.TradeExtension
 {
+    public interface ITradeRequestApi
+    {
+        void CreateTrade(string uuid);
+    }
+
     public static class FrameworkTradeProtocol
     {
         public const string Capability = "builtin.trade";

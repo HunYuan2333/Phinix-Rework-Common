@@ -27,10 +27,14 @@ namespace Utils.Framework
     {
         Continue = 0,
         Handled = 1,
+        Handle = 1,
         ReplacePayload = 2,
+        Replace = 2,
         SuppressDefault = 3,
         StopPropagation = 4,
-        LegacyFallback = 5
+        Block = 4,
+        LegacyFallback = 5,
+        Observe = 6
     }
 
     public interface IPhinixExtension
@@ -62,6 +66,8 @@ namespace Utils.Framework
     public interface IFrameworkServerPacketDispatcher
     {
         void Send(string connectionId, FrameworkPacket packet);
+
+        void Send(string connectionId, FrameworkPacket packet, string sourceExtensionId);
     }
 
     public interface IExtensionBuilder
@@ -82,11 +88,25 @@ namespace Utils.Framework
 
         void AddServerMessageHandler(IServerMessageHandler handler);
 
+        void AddServerInboundMessageInterceptor(IServerInboundMessageInterceptor interceptor);
+
+        void AddServerDefaultMessageHandler(IServerDefaultMessageHandler handler);
+
+        void AddServerMessageObserver(IServerMessageObserver observer);
+
         void AddItemCodec(IItemCodec codec);
 
         void AddClientCommandHandler(IClientCommandHandler handler);
 
         void AddServerCommandHandler(IServerCommandHandler handler);
+
+        void AddServerInboundCommandInterceptor(IServerInboundCommandInterceptor interceptor);
+
+        void AddServerDefaultCommandHandler(IServerDefaultCommandHandler handler);
+
+        void AddServerCommandObserver(IServerCommandObserver observer);
+
+        void AddServerOutboundPacketInterceptor(IServerOutboundPacketInterceptor interceptor);
 
         void RegisterApi<T>(T implementation) where T : class;
 
@@ -455,6 +475,24 @@ namespace Utils.Framework
         ServerIncomingMessageResult HandleIncomingMessage(FrameworkPacket message, ServerFrameworkContext context);
     }
 
+    public interface IServerInboundMessageInterceptor : IMessageHandler
+    {
+        bool CanInterceptIncomingMessage(FrameworkPacket message);
+
+        ServerIncomingMessageResult InterceptIncomingMessage(FrameworkPacket message, ServerFrameworkContext context);
+    }
+
+    public interface IServerDefaultMessageHandler : IServerMessageHandler
+    {
+    }
+
+    public interface IServerMessageObserver : IMessageHandler
+    {
+        bool CanObserveIncomingMessage(FrameworkPacket message);
+
+        void ObserveIncomingMessage(FrameworkPacket message, ServerFrameworkContext context, MessageHandlingResultAction terminalAction);
+    }
+
     public interface IItemCodec
     {
         string CodecId { get; }
@@ -485,6 +523,33 @@ namespace Utils.Framework
         bool CanHandleIncomingCommand(FrameworkPacket command);
 
         ServerIncomingCommandResult HandleIncomingCommand(FrameworkPacket command, ServerFrameworkContext context);
+    }
+
+    public interface IServerInboundCommandInterceptor : ICommandHandler
+    {
+        bool CanInterceptIncomingCommand(FrameworkPacket command);
+
+        ServerIncomingCommandResult InterceptIncomingCommand(FrameworkPacket command, ServerFrameworkContext context);
+    }
+
+    public interface IServerDefaultCommandHandler : IServerCommandHandler
+    {
+    }
+
+    public interface IServerCommandObserver : ICommandHandler
+    {
+        bool CanObserveIncomingCommand(FrameworkPacket command);
+
+        void ObserveIncomingCommand(FrameworkPacket command, ServerFrameworkContext context, MessageHandlingResultAction terminalAction);
+    }
+
+    public interface IServerOutboundPacketInterceptor
+    {
+        int Priority { get; }
+
+        bool CanInterceptOutgoingPacket(FrameworkPacket packet, ServerOutboundPacketContext context);
+
+        ServerOutgoingPacketResult InterceptOutgoingPacket(FrameworkPacket packet, ServerOutboundPacketContext context);
     }
 
     public sealed class ClientOutgoingMessageResult
@@ -526,6 +591,15 @@ namespace Utils.Framework
         public FrameworkPacket Command { get; set; }
     }
 
+    public sealed class ServerOutgoingPacketResult
+    {
+        public MessageHandlingResultAction Action { get; set; } = MessageHandlingResultAction.Continue;
+
+        public FrameworkPacket Packet { get; set; }
+
+        public IReadOnlyCollection<string> TargetConnectionIds { get; set; }
+    }
+
     public sealed class ItemCodecContext
     {
         public FrameworkCompatibilityMode CompatibilityMode { get; set; }
@@ -558,6 +632,8 @@ namespace Utils.Framework
 
         public string SenderUuid { get; set; }
 
+        public string SourceExtensionId { get; set; }
+
         public Action<string, FrameworkPacket> SendMessage { get; set; }
 
         public Action<FrameworkPacket, string[]> BroadcastMessage { get; set; }
@@ -569,6 +645,21 @@ namespace Utils.Framework
         public IReadOnlyCollection<string> ServerCapabilities { get; set; } = Array.Empty<string>();
 
         public Func<string, bool> HasRemoteCapability { get; set; }
+
+        public Func<string, string, bool> ConnectionHasCapability { get; set; }
+
+        public Action<string, LogLevel> Log { get; set; }
+    }
+
+    public sealed class ServerOutboundPacketContext
+    {
+        public string SourceExtensionId { get; set; }
+
+        public IReadOnlyCollection<string> TargetConnectionIds { get; set; } = Array.Empty<string>();
+
+        public Action<string, FrameworkPacket> DeliverToConnection { get; set; }
+
+        public Func<string, bool> IsConnectionFrameworkCapable { get; set; }
 
         public Func<string, string, bool> ConnectionHasCapability { get; set; }
 
@@ -597,11 +688,25 @@ namespace Utils.Framework
 
         public List<IServerMessageHandler> ServerMessageHandlers { get; } = new List<IServerMessageHandler>();
 
+        public List<IServerInboundMessageInterceptor> ServerInboundMessageInterceptors { get; } = new List<IServerInboundMessageInterceptor>();
+
+        public List<IServerDefaultMessageHandler> ServerDefaultMessageHandlers { get; } = new List<IServerDefaultMessageHandler>();
+
+        public List<IServerMessageObserver> ServerMessageObservers { get; } = new List<IServerMessageObserver>();
+
         public List<IItemCodec> ItemCodecs { get; } = new List<IItemCodec>();
 
         public List<IClientCommandHandler> ClientCommandHandlers { get; } = new List<IClientCommandHandler>();
 
         public List<IServerCommandHandler> ServerCommandHandlers { get; } = new List<IServerCommandHandler>();
+
+        public List<IServerInboundCommandInterceptor> ServerInboundCommandInterceptors { get; } = new List<IServerInboundCommandInterceptor>();
+
+        public List<IServerDefaultCommandHandler> ServerDefaultCommandHandlers { get; } = new List<IServerDefaultCommandHandler>();
+
+        public List<IServerCommandObserver> ServerCommandObservers { get; } = new List<IServerCommandObserver>();
+
+        public List<IServerOutboundPacketInterceptor> ServerOutboundPacketInterceptors { get; } = new List<IServerOutboundPacketInterceptor>();
 
     }
 }
