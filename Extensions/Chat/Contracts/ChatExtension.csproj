@@ -20,7 +20,7 @@
   </ItemGroup>
 
   <Target Name="CopyToClientExtensions" AfterTargets="Build" Condition="'$(TargetFramework)' == 'net472'">
-    <MakeDir Directories="$(SolutionDir)\Client\Common\Extensions" />
-    <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFiles="$(SolutionDir)\Client\Common\Extensions\08-ChatExtension.dll" />
+    <MakeDir Directories="$(SolutionDir)\Output\Client\Common\Extensions" />
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFiles="$(SolutionDir)\Output\Client\Common\Extensions\08-ChatExtension.dll" />
   </Target>
 </Project>
