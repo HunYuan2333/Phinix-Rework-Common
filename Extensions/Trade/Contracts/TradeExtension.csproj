@@ -36,8 +36,8 @@
     </Otherwise>
   </Choose>
 
-  <Target Name="CopyToAssemblies" AfterTargets="Build" Condition="'$(TargetFramework)' == 'net472'">
-    <MakeDir Directories="$(SolutionDir)\Client\Common\Assemblies" />
-    <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFiles="$(SolutionDir)\Client\Common\Assemblies\09-TradeExtension.dll" />
+  <Target Name="CopyToClientExtensions" AfterTargets="Build" Condition="'$(TargetFramework)' == 'net472'">
+    <MakeDir Directories="$(SolutionDir)\Client\Common\Extensions" />
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFiles="$(SolutionDir)\Client\Common\Extensions\09-TradeExtension.dll" />
   </Target>
 </Project>

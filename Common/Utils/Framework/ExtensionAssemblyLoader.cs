@@ -21,7 +21,8 @@ namespace Utils.Framework
                     continue;
                 }
 
-                foreach (string assemblyPath in Directory.EnumerateFiles(probeDirectory, "*.dll", SearchOption.TopDirectoryOnly))
+                foreach (string assemblyPath in Directory.EnumerateFiles(probeDirectory, "*.dll", SearchOption.TopDirectoryOnly)
+                    .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase))
                 {
                     tryLoadAssembly(assemblyPath, log);
                 }

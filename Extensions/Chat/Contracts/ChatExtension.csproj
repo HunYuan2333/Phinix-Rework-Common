@@ -19,8 +19,8 @@
     <Content Include="Proto\Message\BuiltInChat.proto" />
   </ItemGroup>
 
-  <Target Name="CopyToAssemblies" AfterTargets="Build" Condition="'$(TargetFramework)' == 'net472'">
-    <MakeDir Directories="$(SolutionDir)\Client\Common\Assemblies" />
-    <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFiles="$(SolutionDir)\Client\Common\Assemblies\08-ChatExtension.dll" />
+  <Target Name="CopyToClientExtensions" AfterTargets="Build" Condition="'$(TargetFramework)' == 'net472'">
+    <MakeDir Directories="$(SolutionDir)\Client\Common\Extensions" />
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFiles="$(SolutionDir)\Client\Common\Extensions\08-ChatExtension.dll" />
   </Target>
 </Project>
