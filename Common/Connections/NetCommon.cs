@@ -85,17 +85,36 @@ namespace Connections
         /// <param name="reader">Data reader containing the payload</param>
         private void packetHandlerCallbackWrapper(NetPeer peer, NetDataReader reader)
         {
-            // Get the connection ID by converting LiteNetLib's connection id long to a hex string
-            string connectionId = peer.ConnectId.ToString("X");
+            string type;
+            byte[] data;
+            string connectionId;
 
-            // Get the module string and message data
-            string type = reader.GetString();
-            byte[] data = reader.GetRemainingBytes();
-            
-            // Invoke the packet handler responsible for this packet type
-            if (registeredPacketHandlers.ContainsKey(type))
+            try
             {
-                registeredPacketHandlers[type].Invoke(type, connectionId, data);
+                connectionId = peer.ConnectId.ToString("X");
+                type = reader.GetString();
+                data = reader.GetRemainingBytes();
+            }
+            catch (Exception ex)
+            {
+                RaiseLogEntry(new LogEventArgs(
+                    $"Failed to read incoming packet from peer {peer.ConnectId:X}: {ex.Message}",
+                    LogLevel.ERROR));
+                return;
+            }
+
+            if (registeredPacketHandlers.TryGetValue(type, out PacketHandlerDelegate handler))
+            {
+                try
+                {
+                    handler.Invoke(type, connectionId, data);
+                }
+                catch (Exception ex)
+                {
+                    RaiseLogEntry(new LogEventArgs(
+                        $"Unhandled exception in packet handler for module '{type}' from {connectionId}: {ex}",
+                        LogLevel.ERROR));
+                }
             }
         }
     }

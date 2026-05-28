@@ -27,7 +27,18 @@ namespace Utils.Framework
 
             foreach (IServerInboundMessageInterceptor interceptor in InboundMessageInterceptors.Where(candidate => candidate.CanInterceptIncomingMessage(currentMessage)))
             {
-                ServerIncomingMessageResult result = interceptor.InterceptIncomingMessage(currentMessage, context);
+                ServerIncomingMessageResult result = null;
+                try
+                {
+                    result = interceptor.InterceptIncomingMessage(currentMessage, context);
+                }
+                catch (Exception ex)
+                {
+                    context.Log?.Invoke(
+                        $"Message interceptor {interceptor.GetType().FullName} threw for '{currentMessage.MessageType}': {ex}",
+                        LogLevel.ERROR);
+                    continue;
+                }
                 if (shouldContinue(result?.Action))
                 {
                     continue;
@@ -51,7 +62,18 @@ namespace Utils.Framework
             foreach (IServerDefaultMessageHandler handler in DefaultMessageHandlers.Where(candidate => candidate.CanHandleIncomingMessage(currentMessage)))
             {
                 matchedHandler = true;
-                ServerIncomingMessageResult result = handler.HandleIncomingMessage(currentMessage, context);
+                ServerIncomingMessageResult result = null;
+                try
+                {
+                    result = handler.HandleIncomingMessage(currentMessage, context);
+                }
+                catch (Exception ex)
+                {
+                    context.Log?.Invoke(
+                        $"Message handler {handler.GetType().FullName} threw for '{currentMessage.MessageType}': {ex}",
+                        LogLevel.ERROR);
+                    continue;
+                }
                 if (shouldContinue(result?.Action))
                 {
                     continue;
@@ -86,7 +108,18 @@ namespace Utils.Framework
 
             foreach (IServerInboundCommandInterceptor interceptor in InboundCommandInterceptors.Where(candidate => candidate.CanInterceptIncomingCommand(currentCommand)))
             {
-                ServerIncomingCommandResult result = interceptor.InterceptIncomingCommand(currentCommand, context);
+                ServerIncomingCommandResult result = null;
+                try
+                {
+                    result = interceptor.InterceptIncomingCommand(currentCommand, context);
+                }
+                catch (Exception ex)
+                {
+                    context.Log?.Invoke(
+                        $"Command interceptor {interceptor.GetType().FullName} threw for '{currentCommand.MessageType}': {ex}",
+                        LogLevel.ERROR);
+                    continue;
+                }
                 if (shouldContinue(result?.Action))
                 {
                     continue;
@@ -110,7 +143,18 @@ namespace Utils.Framework
             foreach (IServerDefaultCommandHandler handler in DefaultCommandHandlers.Where(candidate => candidate.CanHandleIncomingCommand(currentCommand)))
             {
                 matchedHandler = true;
-                ServerIncomingCommandResult result = handler.HandleIncomingCommand(currentCommand, context);
+                ServerIncomingCommandResult result = null;
+                try
+                {
+                    result = handler.HandleIncomingCommand(currentCommand, context);
+                }
+                catch (Exception ex)
+                {
+                    context.Log?.Invoke(
+                        $"Command handler {handler.GetType().FullName} threw for '{currentCommand.MessageType}': {ex}",
+                        LogLevel.ERROR);
+                    continue;
+                }
                 if (shouldContinue(result?.Action))
                 {
                     continue;
