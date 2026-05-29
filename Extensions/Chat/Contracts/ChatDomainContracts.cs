@@ -74,6 +74,7 @@ namespace PhinixClient.Framework
         bool ShouldPlayNotification(UIChatMessage message, string localUuid, bool playNoiseOnMessageReceived, bool isInGame, IEnumerable<string> blockedUserUuids);
     }
 
+#if NET472
     public interface IFrameworkChatClientApi
     {
         FrameworkPacket CreateOutgoingMessage(string rawMessage, ClientFrameworkContext context);
@@ -127,4 +128,5 @@ namespace PhinixClient.Framework
 
         void Log(LogEventArgs args);
     }
+#endif
 }

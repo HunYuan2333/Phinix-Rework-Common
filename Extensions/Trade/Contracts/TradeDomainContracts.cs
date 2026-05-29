@@ -4,8 +4,10 @@ using System.Linq;
 using UserManagement;
 using Utils;
 using Utils.Framework;
+#if NET472
 using Verse;
 using Thing = Verse.Thing;
+#endif
 
 namespace PhinixClient.Trade
 {
@@ -226,6 +228,7 @@ namespace PhinixClient.Framework
         void UpdateTradeStatus(string tradeId, bool? accepted = null, bool? cancelled = null);
     }
 
+#if NET472
     public interface IFrameworkTradeClientApi
     {
         event EventHandler RepositoryChanged;
@@ -274,4 +277,5 @@ namespace PhinixClient.Framework
 
         void Log(LogEventArgs args);
     }
+#endif
 }

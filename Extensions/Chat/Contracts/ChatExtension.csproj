@@ -10,7 +10,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\Dependencies\protobuf\csharp\src\Google.Protobuf\Google.Protobuf.csproj" />
-    <ProjectReference Include="..\..\..\Client\ClientExtensionAbstractions\ClientExtensionAbstractions.csproj" />
+    <ProjectReference Include="..\..\..\Client\ClientExtensionAbstractions\ClientExtensionAbstractions.csproj" Condition="'$(TargetFramework)' == 'net472'" />
     <ProjectReference Include="..\..\..\Common\UserManagement\UserManagement.csproj" />
     <ProjectReference Include="..\..\..\Common\Utils\Utils.csproj" />
   </ItemGroup>

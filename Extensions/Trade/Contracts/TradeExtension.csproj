@@ -9,13 +9,13 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\Client\ClientExtensionAbstractions\ClientExtensionAbstractions.csproj" />
+    <ProjectReference Include="..\..\..\Client\ClientExtensionAbstractions\ClientExtensionAbstractions.csproj" Condition="'$(TargetFramework)' == 'net472'" />
     <ProjectReference Include="..\..\..\Common\UserManagement\UserManagement.csproj" />
     <ProjectReference Include="..\..\..\Common\Utils\Utils.csproj" />
   </ItemGroup>
   <Choose>
     <When Condition="Exists('$(SolutionDir)\GameDlls\1.6')">
-      <ItemGroup>
+      <ItemGroup Condition="'$(TargetFramework)' == 'net472'">
         <Reference Include="Assembly-CSharp">
           <HintPath>$(SolutionDir)\GameDlls\1.6\Assembly-CSharp.dll</HintPath>
         </Reference>
@@ -25,7 +25,7 @@
       </ItemGroup>
     </When>
     <Otherwise>
-      <ItemGroup>
+      <ItemGroup Condition="'$(TargetFramework)' == 'net472'">
         <Reference Include="Assembly-CSharp">
           <HintPath>..\..\..\GameDlls\Assembly-CSharp.dll</HintPath>
         </Reference>
