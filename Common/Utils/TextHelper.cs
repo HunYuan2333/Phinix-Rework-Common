@@ -1,7 +1,8 @@
-﻿// Original file provided by Longwelwind (https://github.com/Longwelwind)
+// Original file provided by Longwelwind (https://github.com/Longwelwind)
 // as a part of the RimWorld mod Phi (https://github.com/Longwelwind/Phi)
 
 using System;
+using System.Collections.Generic;
 using System.Text.RegularExpressions;
 
 namespace Utils
@@ -18,6 +19,11 @@ namespace Utils
 		private static readonly string[] unsafeTags = {"size"};
 
 		/// <summary>
+		/// Precompiled regex cache keyed by tag name to avoid per-call allocation.
+		/// </summary>
+		private static readonly Dictionary<string, Regex> regexCache = new Dictionary<string, Regex>();
+
+		/// <summary>
 		/// Strips the given set of tags from the input string.
 		/// </summary>
 		/// <param name="input">String to strip</param>
@@ -26,11 +32,13 @@ namespace Utils
 		private static string stripRichText(string input, params string[] strippedTags)
 		{
 			foreach (string tag in strippedTags) {
-				// Maybe a better way than a Regex to parse RichText?
-				// Unfortunately not, I'm afraid
-				string pattern = @"<\/?" + tag + @"(=[\w#]+)?>";
+				if (!regexCache.TryGetValue(tag, out Regex regex))
+				{
+					string pattern = @"<\/?" + tag + @"(=[\w#]+)?>";
+					regex = new Regex(pattern, RegexOptions.Compiled);
+					regexCache[tag] = regex;
+				}
 
-				Regex regex = new Regex(pattern);
 				input = regex.Replace (input, "");
 			}
 
@@ -59,4 +67,3 @@ namespace Utils
 		}
 	}
 }
-
