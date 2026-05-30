@@ -27,6 +27,11 @@
     <None Include="compile-proto.sh" />
   </ItemGroup>
 
+  <!-- Exclude client-only source from Common; it lives in Client/Common/UserManagement.Client -->
+  <ItemGroup>
+    <Compile Remove="ClientUserManager.cs" />
+  </ItemGroup>
+
   <Target Name="BeforeBuild" Condition="'$(OS)' == 'Windows_NT' and Exists('$(MSBuildProjectDirectory)\compile-proto.bat')">
     <Exec Command="call &quot;$(MSBuildProjectDirectory)\compile-proto.bat&quot;" />
   </Target>

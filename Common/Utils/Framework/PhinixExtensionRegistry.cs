@@ -30,6 +30,8 @@ namespace Utils.Framework
 
             foreach (Type moduleType in moduleTypes)
             {
+                ExtensionDiscoveryResult result = ExtensionDiscoveryResult.FromModuleType(moduleType, hostContext);
+
                 IPhinixExtensionModule module;
                 try
                 {
@@ -37,16 +39,24 @@ namespace Utils.Framework
                 }
                 catch (Exception exception)
                 {
+                    result.State = ExtensionModuleState.Failed;
+                    result.StateDetail = $"Failed to initialize: {exception.Message}";
+                    discovered.ExtensionResults.Add(result);
                     discovered.Warnings.Add($"Failed to initialize extension module '{moduleType.FullName}': {exception.Message}");
                     continue;
                 }
 
                 if (module == null)
                 {
+                    result.State = ExtensionModuleState.Failed;
+                    result.StateDetail = "Activator.CreateInstance returned null (not IPhinixExtensionModule).";
+                    discovered.ExtensionResults.Add(result);
                     continue;
                 }
 
-                ExtensionBuilder builder = new ExtensionBuilder(module.ExtensionId, hostContext, discovered, apiRegistry);
+                result.ExtensionId = module.ExtensionId;
+
+                ExtensionBuilder builder = new ExtensionBuilder(module.ExtensionId, hostContext, discovered, apiRegistry, result);
                 if (!seenExtensionIds.Add(module.ExtensionId))
                 {
                     discovered.Warnings.Add($"Duplicate extension ID '{module.ExtensionId}' discovered in '{moduleType.FullName}'.");
@@ -58,14 +68,19 @@ namespace Utils.Framework
                 try
                 {
                     module.Register(builder);
+                    result.State = ExtensionModuleState.Registered;
                     discovered.Diagnostics.Add(
                         $"Framework module '{module.ExtensionId}' registered from '{moduleType.FullName}' " +
                         $"for host '{hostContext.HostKind ?? "unknown"}'.");
                 }
                 catch (Exception exception)
                 {
+                    result.State = ExtensionModuleState.Failed;
+                    result.StateDetail = $"Register() threw: {exception.Message}";
                     discovered.Warnings.Add($"Failed to register extension module '{moduleType.FullName}': {exception.Message}");
                 }
+
+                discovered.ExtensionResults.Add(result);
             }
 
             List<Type> legacyComponentTypes = candidateTypes
@@ -210,13 +225,22 @@ namespace Utils.Framework
 
             foreach (IActivatablePhinixExtensionModule module in discovered?.Modules?.OfType<IActivatablePhinixExtensionModule>() ?? Enumerable.Empty<IActivatablePhinixExtensionModule>())
             {
+                ExtensionDiscoveryResult result = discovered.ExtensionResults
+                    .Find(r => string.Equals(r.ExtensionId, module.ExtensionId, StringComparison.OrdinalIgnoreCase));
+
                 try
                 {
                     module.Activate(hostContext);
+                    if (result != null) result.State = ExtensionModuleState.Active;
                     discovered.Diagnostics.Add($"Framework module '{module.ExtensionId}' activated for host '{hostContext.HostKind ?? "unknown"}'.");
                 }
                 catch (Exception exception)
                 {
+                    if (result != null)
+                    {
+                        result.State = ExtensionModuleState.Failed;
+                        result.StateDetail = $"Activate() threw: {exception.Message}";
+                    }
                     discovered.Warnings.Add($"Failed to activate extension module '{module.ExtensionId}': {exception.Message}");
                 }
             }
@@ -228,13 +252,22 @@ namespace Utils.Framework
 
             foreach (IActivatablePhinixExtensionModule module in discovered?.Modules?.OfType<IActivatablePhinixExtensionModule>() ?? Enumerable.Empty<IActivatablePhinixExtensionModule>())
             {
+                ExtensionDiscoveryResult result = discovered.ExtensionResults
+                    .Find(r => string.Equals(r.ExtensionId, module.ExtensionId, StringComparison.OrdinalIgnoreCase));
+
                 try
                 {
                     module.Shutdown(hostContext);
+                    if (result != null) result.State = ExtensionModuleState.Shutdown;
                     discovered.Diagnostics.Add($"Framework module '{module.ExtensionId}' shut down for host '{hostContext.HostKind ?? "unknown"}'.");
                 }
                 catch (Exception exception)
                 {
+                    if (result != null)
+                    {
+                        result.State = ExtensionModuleState.Failed;
+                        result.StateDetail = $"Shutdown() threw: {exception.Message}";
+                    }
                     discovered.Warnings.Add($"Failed to shut down extension module '{module.ExtensionId}': {exception.Message}");
                 }
             }
@@ -331,13 +364,15 @@ namespace Utils.Framework
             private readonly ExtensionHostContext hostContext;
             private readonly DiscoveredPhinixExtensions discovered;
             private readonly ExtensionApiRegistry apiRegistry;
+            private readonly ExtensionDiscoveryResult result;
 
-            public ExtensionBuilder(string extensionId, ExtensionHostContext hostContext, DiscoveredPhinixExtensions discovered, ExtensionApiRegistry apiRegistry)
+            public ExtensionBuilder(string extensionId, ExtensionHostContext hostContext, DiscoveredPhinixExtensions discovered, ExtensionApiRegistry apiRegistry, ExtensionDiscoveryResult result = null)
             {
                 this.extensionId = extensionId ?? string.Empty;
                 this.hostContext = hostContext ?? ExtensionHostContext.Empty;
                 this.discovered = discovered;
                 this.apiRegistry = apiRegistry ?? new ExtensionApiRegistry();
+                this.result = result;
             }
 
             public string ExtensionId => extensionId;
@@ -408,20 +443,22 @@ namespace Utils.Framework
 
             public void RegisterApi<T>(T implementation) where T : class
             {
-                ExtensionApiRegistrationResult result = apiRegistry.TryRegisterApi(extensionId, implementation);
-                if (!string.IsNullOrEmpty(result.Diagnostic))
+                if (result != null) result.RegisteredApis.Add(typeof(T).Name);
+                ExtensionApiRegistrationResult regResult = apiRegistry.TryRegisterApi(extensionId, implementation);
+                if (!string.IsNullOrEmpty(regResult.Diagnostic))
                 {
-                    discovered.Diagnostics.Add(result.Diagnostic);
+                    discovered.Diagnostics.Add(regResult.Diagnostic);
                 }
 
-                if (!string.IsNullOrEmpty(result.Warning))
+                if (!string.IsNullOrEmpty(regResult.Warning))
                 {
-                    discovered.Warnings.Add(result.Warning);
+                    discovered.Warnings.Add(regResult.Warning);
                 }
             }
 
             public bool TryResolveApi<T>(out T implementation) where T : class
             {
+                if (result != null) result.ConsumedApis.Add(typeof(T).Name);
                 return apiRegistry.TryResolve(out implementation);
             }
 

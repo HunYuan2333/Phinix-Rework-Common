@@ -29,4 +29,10 @@
   <ItemGroup>
     <None Include="packages.config" />
   </ItemGroup>
+
+  <!-- Exclude endpoint-only source from Common; they live in Client/Common/Connections.Client and Server/Connections.Server -->
+  <ItemGroup>
+    <Compile Remove="NetClient.cs" />
+    <Compile Remove="NetServer.cs" />
+  </ItemGroup>
 </Project>

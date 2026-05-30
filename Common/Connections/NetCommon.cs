@@ -20,7 +20,7 @@ namespace Connections
         /// <summary>
         /// Listener that handles communications over the wire.
         /// </summary>
-        internal EventBasedNetListener listener = new EventBasedNetListener();
+        protected internal EventBasedNetListener listener = new EventBasedNetListener();
 
         /// <summary>
         /// Packet handler callback delegate. Used as a callback when registering packet handlers.

@@ -28,6 +28,11 @@
     <Content Include="Packets\HelloPacket.proto" />
   </ItemGroup>
 
+  <!-- Exclude client-only source from Common; it lives in Client/Common/Authentication.Client -->
+  <ItemGroup>
+    <Compile Remove="ClientAuthenticator.cs" />
+  </ItemGroup>
+
   <Target Name="BeforeBuild" Condition="'$(OS)' == 'Windows_NT' and Exists('$(MSBuildProjectDirectory)\compile-proto.bat')">
     <Exec Command="call &quot;$(MSBuildProjectDirectory)\compile-proto.bat&quot;" />
   </Target>

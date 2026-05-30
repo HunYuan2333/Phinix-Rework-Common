@@ -91,13 +91,6 @@ namespace Utils.Framework
     }
 
     [DataContract]
-    public sealed class RedPacketPayload
-    {
-        [DataMember(Order = 0)]
-        public string Body { get; set; }
-    }
-
-    [DataContract]
     public sealed class FrameworkItemPayload
     {
         [DataMember(Order = 0)]

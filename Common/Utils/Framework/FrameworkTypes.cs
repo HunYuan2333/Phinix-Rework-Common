@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 
 namespace Utils.Framework
 {
@@ -37,6 +38,16 @@ namespace Utils.Framework
         Observe = 6
     }
 
+    public enum ExtensionModuleState
+    {
+        Unknown,
+        Discovered,
+        Registered,
+        Active,
+        Failed,
+        Shutdown
+    }
+
     public interface IPhinixExtension
     {
         string ExtensionId { get; }
@@ -68,6 +79,22 @@ namespace Utils.Framework
         void Send(string connectionId, FrameworkPacket packet);
 
         void Send(string connectionId, FrameworkPacket packet, string sourceExtensionId);
+    }
+
+    public interface IExtensionConfigSection
+    {
+        string SectionName { get; }
+
+        void LoadDefaults();
+
+        void Validate();
+    }
+
+    public interface IExtensionConfigProvider
+    {
+        T GetConfig<T>() where T : IExtensionConfigSection, new();
+
+        void SaveConfig<T>(T config) where T : IExtensionConfigSection;
     }
 
     public interface IExtensionBuilder
@@ -306,6 +333,8 @@ namespace Utils.Framework
         public IExtensionApiRegistry ApiRegistry { get; internal set; } = new ExtensionApiRegistry();
 
         public IReadOnlyList<ExtensionPersistenceRegistration> Persistents => persistents;
+
+        public Func<Assembly, string> ResolveSourcePackageId { get; set; }
 
         public void AddService<T>(T service) where T : class
         {
@@ -666,6 +695,37 @@ namespace Utils.Framework
         public Action<string, LogLevel> Log { get; set; }
     }
 
+    public sealed class ExtensionDiscoveryResult
+    {
+        public string ExtensionId { get; set; }
+        public string DisplayName { get; set; }
+        public string Version { get; set; }
+        public string AssemblyName { get; set; }
+        public ExtensionModuleState State { get; set; }
+        public string StateDetail { get; set; }
+        public string SourcePackageId { get; set; }
+        public List<string> RegisteredApis { get; set; } = new List<string>();
+        public List<string> ConsumedApis { get; set; } = new List<string>();
+
+        public static ExtensionDiscoveryResult FromModuleType(Type moduleType, ExtensionHostContext hostContext)
+        {
+            ExtensionDiscoveryResult result = new ExtensionDiscoveryResult
+            {
+                DisplayName = moduleType.Name,
+                AssemblyName = moduleType.Assembly.GetName().Name,
+                Version = moduleType.Assembly.GetName().Version?.ToString() ?? "0.0.0.0",
+                State = ExtensionModuleState.Discovered
+            };
+
+            if (hostContext?.ResolveSourcePackageId != null)
+            {
+                result.SourcePackageId = hostContext.ResolveSourcePackageId(moduleType.Assembly);
+            }
+
+            return result;
+        }
+    }
+
     public sealed class DiscoveredPhinixExtensions
     {
         public IExtensionApiRegistry ApiRegistry { get; internal set; } = new ExtensionApiRegistry();
@@ -677,6 +737,8 @@ namespace Utils.Framework
         public List<string> Diagnostics { get; } = new List<string>();
 
         public List<string> Warnings { get; } = new List<string>();
+
+        public List<ExtensionDiscoveryResult> ExtensionResults { get; } = new List<ExtensionDiscoveryResult>();
 
         public List<ICapabilityProvider> CapabilityProviders { get; } = new List<ICapabilityProvider>();
 

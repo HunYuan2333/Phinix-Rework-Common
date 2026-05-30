@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Phinix.TradeExtension;
 using UserManagement;
 using Utils;
 using Utils.Framework;
@@ -259,6 +260,18 @@ namespace PhinixClient.Framework
         void HandleStatusUpdateResponse(FrameworkPacket packet);
         void HandleCompletedEvent(FrameworkPacket packet);
         void HandleCancelledEvent(FrameworkPacket packet);
+
+        /// <summary>
+        /// Legacy 适配器专用：将旧版服务器发来的 trade 快照注入 repository。
+        /// FrameworkV2 模式不应调用此方法 —— repository 由 HandleSnapshot 维护。
+        /// </summary>
+        void UpsertTrade(FrameworkTradeStateSnapshot snapshot);
+
+        /// <summary>
+        /// Legacy 适配器专用：从 repository 移除已完成的 trade。
+        /// FrameworkV2 模式不应调用此方法 —— repository 由 HandleCompletedEvent/HandleCancelledEvent 维护。
+        /// </summary>
+        void RemoveTrade(string tradeId);
     }
 
     public interface ITradeUiHostContext
