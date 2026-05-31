@@ -185,7 +185,7 @@ namespace PhinixClient.Trade
     }
 }
 
-namespace PhinixClient.Framework
+namespace Phinix.TradeExtension.Client
 {
     public interface ITradeItemPayloadEncoder
     {
@@ -249,7 +249,7 @@ namespace PhinixClient.Framework
         bool TryGetOtherPartyAccepted(string tradeId, string localUuid, out bool otherPartyAccepted);
         bool TryGetPartyAccepted(string tradeId, string partyUuid, out bool accepted);
         bool TryGetItemsOnOffer(string tradeId, string partyUuid, out IEnumerable<PhinixClient.Trade.TradeItemSnapshot> items);
-        void RequestSnapshot(IFrameworkClientTransport frameworkClient, bool authenticated, bool loggedIn, string sessionId, string senderUuid);
+        FrameworkPacket CreateSnapshotRequestPacket(string sessionId, string senderUuid);
         FrameworkPacket CreateTradeRequest(string otherPartyUuid, ClientFrameworkContext context);
         FrameworkPacket CreateOfferUpdateRequest(string tradeId, IEnumerable<PhinixClient.Trade.TradeItemSnapshot> tradeItems, ClientFrameworkContext context);
         FrameworkPacket CreateStatusUpdateRequest(string tradeId, bool? accepted, bool? cancelled, ClientFrameworkContext context);

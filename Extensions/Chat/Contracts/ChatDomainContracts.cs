@@ -1,5 +1,9 @@
 using System;
 using System.Collections.Generic;
+using PhinixClient;
+#if NET472
+using PhinixClient.Framework;
+#endif
 using UserManagement;
 using Utils;
 using Utils.Framework;
@@ -53,7 +57,7 @@ namespace PhinixClient
     }
 }
 
-namespace PhinixClient.Framework
+namespace Phinix.ChatExtension.Client
 {
     public interface IClientChatService
     {
@@ -82,8 +86,6 @@ namespace PhinixClient.Framework
         FrameworkDisplayMessage RenderMessage(FrameworkPacket message);
 
         FrameworkPacket CreateHistoryRequestPacket(string sessionId, string senderUuid);
-
-        void RequestHistory(IFrameworkClientTransport frameworkClient, bool authenticated, bool loggedIn, string sessionId, string senderUuid);
 
         UIChatMessage[] BuildUiMessages(IEnumerable<FrameworkDisplayMessage> messages, IClientUserDirectory userDirectory);
 

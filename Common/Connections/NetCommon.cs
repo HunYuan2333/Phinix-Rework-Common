@@ -33,8 +33,11 @@ namespace Connections
 
         /// <summary>
         /// Dictionary containing packet types and the handlers registered to them.
+        /// Protected by <see cref="handlerLock"/> for concurrent access from
+        /// init/registration threads and the LiteNetLib polling thread.
         /// </summary>
-        private Dictionary<string, PacketHandlerDelegate> registeredPacketHandlers = new Dictionary<string, PacketHandlerDelegate>();
+        private readonly Dictionary<string, PacketHandlerDelegate> registeredPacketHandlers = new Dictionary<string, PacketHandlerDelegate>();
+        private readonly object handlerLock = new object();
 
         public NetCommon()
         {
@@ -49,12 +52,15 @@ namespace Connections
         /// <param name="callback">Callback delegate</param>
         public void RegisterPacketHandler(string packetType, PacketHandlerDelegate callback)
         {
-            if (registeredPacketHandlers.ContainsKey(packetType))
+            lock (handlerLock)
             {
-                throw new PacketHandlerAlreadyRegisteredException(packetType);
+                if (registeredPacketHandlers.ContainsKey(packetType))
+                {
+                    throw new PacketHandlerAlreadyRegisteredException(packetType);
+                }
+
+                registeredPacketHandlers.Add(packetType, callback);
             }
-            
-            registeredPacketHandlers.Add(packetType, callback);
         }
 
         /// <summary>
@@ -63,9 +69,12 @@ namespace Connections
         /// <param name="packetType">Type of packets handled by handler</param>
         public void UnregisterPacketHandler(string packetType)
         {
-            if (registeredPacketHandlers.ContainsKey(packetType))
+            lock (handlerLock)
             {
-                registeredPacketHandlers.Remove(packetType);
+                if (registeredPacketHandlers.ContainsKey(packetType))
+                {
+                    registeredPacketHandlers.Remove(packetType);
+                }
             }
         }
 
@@ -74,7 +83,10 @@ namespace Connections
         /// </summary>
         public void UnregisterAllPacketHandlers()
         {
-            registeredPacketHandlers.Clear();
+            lock (handlerLock)
+            {
+                registeredPacketHandlers.Clear();
+            }
         }
         
         /// <summary>
@@ -103,17 +115,20 @@ namespace Connections
                 return;
             }
 
-            if (registeredPacketHandlers.TryGetValue(type, out PacketHandlerDelegate handler))
+            lock (handlerLock)
             {
-                try
+                if (registeredPacketHandlers.TryGetValue(type, out PacketHandlerDelegate handler))
                 {
-                    handler.Invoke(type, connectionId, data);
-                }
-                catch (Exception ex)
-                {
-                    RaiseLogEntry(new LogEventArgs(
-                        $"Unhandled exception in packet handler for module '{type}' from {connectionId}: {ex}",
-                        LogLevel.ERROR));
+                    try
+                    {
+                        handler.Invoke(type, connectionId, data);
+                    }
+                    catch (Exception ex)
+                    {
+                        RaiseLogEntry(new LogEventArgs(
+                            $"Unhandled exception in packet handler for module '{type}' from {connectionId}: {ex}",
+                            LogLevel.ERROR));
+                    }
                 }
             }
         }
