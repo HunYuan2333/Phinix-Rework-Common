@@ -272,6 +272,16 @@ namespace PhinixClient.Framework
         /// FrameworkV2 模式不应调用此方法 —— repository 由 HandleCompletedEvent/HandleCancelledEvent 维护。
         /// </summary>
         void RemoveTrade(string tradeId);
+
+    }
+
+    public interface IFrameworkLegacyTradeCompletionApi
+    {
+        /// <summary>
+        /// Legacy 适配器专用：注入旧版服务器发来的交易完成/取消事件。
+        /// FrameworkV2 模式不应调用此方法 —— 完成事件由 HandleCompletedEvent/HandleCancelledEvent 维护。
+        /// </summary>
+        void CompleteTrade(string tradeId, bool success, string otherPartyUuid, IEnumerable<PhinixClient.Trade.TradeItemSnapshot> items);
     }
 
     public interface ITradeUiHostContext
