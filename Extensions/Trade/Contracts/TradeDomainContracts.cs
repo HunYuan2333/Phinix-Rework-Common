@@ -260,7 +260,10 @@ namespace Phinix.TradeExtension.Client
         void HandleStatusUpdateResponse(FrameworkPacket packet);
         void HandleCompletedEvent(FrameworkPacket packet);
         void HandleCancelledEvent(FrameworkPacket packet);
+    }
 
+    public interface IFrameworkLegacyTradeRepositoryApi
+    {
         /// <summary>
         /// Legacy 适配器专用：将旧版服务器发来的 trade 快照注入 repository。
         /// FrameworkV2 模式不应调用此方法 —— repository 由 HandleSnapshot 维护。
@@ -272,7 +275,6 @@ namespace Phinix.TradeExtension.Client
         /// FrameworkV2 模式不应调用此方法 —— repository 由 HandleCompletedEvent/HandleCancelledEvent 维护。
         /// </summary>
         void RemoveTrade(string tradeId);
-
     }
 
     public interface IFrameworkLegacyTradeCompletionApi
@@ -295,6 +297,8 @@ namespace Phinix.TradeExtension.Client
         event EventHandler<UserDisplayNameChangedEventArgs> OnUserDisplayNameChanged;
 
         LookTargets DropPods(IEnumerable<Thing> verseThings);
+
+        void RunOnMainThread(Action action);
 
         void OpenTradeWindow(PhinixClient.Trade.ClientTradeSnapshot trade);
 

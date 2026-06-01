@@ -5,6 +5,8 @@ namespace Utils
 {
     public class TypeUrl
     {
+        private static readonly Regex Pattern = new Regex("([\\w.]+)\\/([\\w.]+?)\\.(\\w+)", RegexOptions.Compiled);
+
         public string Prefix;
         public string Namespace;
         public string Type;
@@ -20,8 +22,7 @@ namespace Utils
         /// <exception cref="ArgumentException">Given string is not a properly-formatted TypeUrl string</exception>
         public TypeUrl(string typeUrl)
         {
-            Regex pattern = new Regex("([\\w.]+)\\/([\\w.]+?)\\.(\\w+)");
-            GroupCollection groups = pattern.Match(typeUrl).Groups;
+            GroupCollection groups = Pattern.Match(typeUrl).Groups;
 
             if (groups.Count == 4) // Group 0 is always present and contains the whole match
             {

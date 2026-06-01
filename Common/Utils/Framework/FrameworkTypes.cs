@@ -97,6 +97,11 @@ namespace Utils.Framework
         void SaveConfig<T>(T config) where T : IExtensionConfigSection;
     }
 
+    public interface ILegacyExtensionConfigMigrator
+    {
+        bool TryMigrateLegacyConfig(IReadOnlyDictionary<string, string> legacyValues);
+    }
+
     public interface IExtensionBuilder
     {
         string ExtensionId { get; }
