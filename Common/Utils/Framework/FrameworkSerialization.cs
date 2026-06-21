@@ -72,6 +72,19 @@ namespace Utils.Framework
             return itemPacket;
         }
 
+        public static FrameworkPacket BuildItemPacket(FrameworkItemPayload payload, string sessionId, string senderUuid)
+        {
+            return new FrameworkPacket
+            {
+                Kind = FrameworkProtocol.KindItem,
+                Flow = global::Phinix.Framework.FrameworkFlow.Item,
+                MessageId = Guid.NewGuid().ToString(),
+                SessionId = sessionId,
+                SenderUuid = senderUuid,
+                PayloadJson = SerializePayload(payload)
+            };
+        }
+
         public static FrameworkItemPayload FromItemPacket(global::Phinix.Framework.FrameworkItemPacket itemPacket)
         {
             if (itemPacket == null) return null;
@@ -87,6 +100,54 @@ namespace Utils.Framework
                         Value = entry.Value
                     })
                     .ToList() ?? new System.Collections.Generic.List<FrameworkMetadataEntry>()
+            };
+        }
+
+        public static bool TryExtractItemPayload(FrameworkPacket packet, out FrameworkItemPayload payload)
+        {
+            payload = null;
+
+            if (packet.PayloadBytes != null && packet.PayloadBytes.Length > 0
+                && string.IsNullOrEmpty(packet.PayloadJson))
+            {
+                try
+                {
+                    global::Phinix.Framework.FrameworkItemPacket itemPacket =
+                        global::Phinix.Framework.FrameworkItemPacket.Parser.ParseFrom(packet.PayloadBytes);
+                    payload = FromItemPacket(itemPacket);
+                    return true;
+                }
+                catch
+                {
+                }
+            }
+
+            if (!string.IsNullOrEmpty(packet.PayloadJson))
+            {
+                try
+                {
+                    payload = DeserializePayload<FrameworkItemPayload>(packet.PayloadJson);
+                    return payload != null;
+                }
+                catch
+                {
+                }
+            }
+
+            return false;
+        }
+
+        public static FrameworkPacket BuildItemPacketDirect(FrameworkItemPayload payload, string sessionId, string senderUuid)
+        {
+            global::Phinix.Framework.FrameworkItemPacket itemPacket = ToItemPacket(payload, Guid.NewGuid().ToString());
+            return new FrameworkPacket
+            {
+                Kind = FrameworkProtocol.KindItem,
+                Flow = global::Phinix.Framework.FrameworkFlow.Item,
+                MessageId = Guid.NewGuid().ToString(),
+                SessionId = sessionId,
+                SenderUuid = senderUuid,
+                PayloadBytes = itemPacket.ToByteArray()
             };
         }
 

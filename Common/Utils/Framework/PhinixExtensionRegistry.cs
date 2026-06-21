@@ -194,6 +194,39 @@ namespace Utils.Framework
                     discovered.ItemCodecs.Add(itemCodec);
                     registeredLegacyComponent = true;
                 }
+                if (instance is IClientIncomingItemHandler clientItemHandler)
+                {
+                    discovered.ClientIncomingItemHandlers.Add(clientItemHandler);
+                    registeredLegacyComponent = true;
+                }
+                if (instance is IClientOutgoingItemHandler clientOutgoingItemHandler)
+                {
+                    discovered.ClientOutgoingItemHandlers.Add(clientOutgoingItemHandler);
+                    registeredLegacyComponent = true;
+                }
+                if (instance is IServerInboundItemInterceptor inboundItemInterceptor)
+                {
+                    discovered.ServerInboundItemInterceptors.Add(inboundItemInterceptor);
+                    registeredLegacyComponent = true;
+                }
+                if (instance is IServerItemHandler serverItemHandler)
+                {
+                    discovered.ServerItemHandlers.Add(serverItemHandler);
+                    if (serverItemHandler is IServerDefaultItemHandler defaultItemHandler)
+                    {
+                        discovered.ServerDefaultItemHandlers.Add(defaultItemHandler);
+                    }
+                    else
+                    {
+                        discovered.ServerDefaultItemHandlers.Add(new LegacyServerDefaultItemHandlerAdapter(serverItemHandler));
+                    }
+                    registeredLegacyComponent = true;
+                }
+                if (instance is IServerItemObserver itemObserver)
+                {
+                    discovered.ServerItemObservers.Add(itemObserver);
+                    registeredLegacyComponent = true;
+                }
 
                 if (registeredLegacyComponent)
                 {
@@ -215,6 +248,12 @@ namespace Utils.Framework
             discovered.ServerDefaultCommandHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
             discovered.ServerCommandObservers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
             discovered.ServerOutboundPacketInterceptors.Sort((left, right) => left.Priority.CompareTo(right.Priority));
+            discovered.ClientIncomingItemHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
+            discovered.ClientOutgoingItemHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
+            discovered.ServerItemHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
+            discovered.ServerInboundItemInterceptors.Sort((left, right) => left.Priority.CompareTo(right.Priority));
+            discovered.ServerDefaultItemHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
+            discovered.ServerItemObservers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
 
             return discovered;
         }
@@ -414,6 +453,33 @@ namespace Utils.Framework
 
             public void AddItemCodec(IItemCodec codec) => addIfMissing(discovered.ItemCodecs, codec);
 
+            public void AddClientItemHandler(IClientIncomingItemHandler handler) => addIfMissing(discovered.ClientIncomingItemHandlers, handler);
+
+            public void AddClientOutgoingItemHandler(IClientOutgoingItemHandler handler) => addIfMissing(discovered.ClientOutgoingItemHandlers, handler);
+
+            public void AddServerItemHandler(IServerItemHandler handler)
+            {
+                addIfMissing(discovered.ServerItemHandlers, handler);
+                if (handler is IServerDefaultItemHandler defaultHandler)
+                {
+                    addIfMissing(discovered.ServerDefaultItemHandlers, defaultHandler);
+                }
+                else
+                {
+                    addIfMissing(discovered.ServerDefaultItemHandlers, new LegacyServerDefaultItemHandlerAdapter(handler));
+                }
+            }
+
+            public void AddServerInboundItemInterceptor(IServerInboundItemInterceptor interceptor) => addIfMissing(discovered.ServerInboundItemInterceptors, interceptor);
+
+            public void AddServerDefaultItemHandler(IServerDefaultItemHandler handler)
+            {
+                addIfMissing(discovered.ServerDefaultItemHandlers, handler);
+                addIfMissing(discovered.ServerItemHandlers, handler);
+            }
+
+            public void AddServerItemObserver(IServerItemObserver observer) => addIfMissing(discovered.ServerItemObservers, observer);
+
             public void AddClientCommandHandler(IClientCommandHandler handler) => addIfMissing(discovered.ClientCommandHandlers, handler);
 
             public void AddServerCommandHandler(IServerCommandHandler handler)
@@ -508,6 +574,22 @@ namespace Utils.Framework
             public bool CanHandleIncomingCommand(FrameworkPacket command) => handler.CanHandleIncomingCommand(command);
 
             public ServerIncomingCommandResult HandleIncomingCommand(FrameworkPacket command, ServerFrameworkContext context) => handler.HandleIncomingCommand(command, context);
+        }
+
+        private sealed class LegacyServerDefaultItemHandlerAdapter : IServerDefaultItemHandler
+        {
+            private readonly IServerItemHandler handler;
+
+            public LegacyServerDefaultItemHandlerAdapter(IServerItemHandler handler)
+            {
+                this.handler = handler;
+            }
+
+            public int Priority => handler.Priority;
+
+            public bool CanHandleIncomingItem(FrameworkPacket itemPacket) => handler.CanHandleIncomingItem(itemPacket);
+
+            public ServerIncomingItemResult HandleIncomingItem(FrameworkPacket itemPacket, ServerFrameworkContext context, IReadOnlyList<IItemCodec> codecs) => handler.HandleIncomingItem(itemPacket, context, codecs);
         }
     }
 }

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Runtime.Serialization;
 using Utils.Framework;
@@ -77,7 +78,11 @@ namespace Phinix.TradeExtension
         public string TradeId { get; set; }
 
         [DataMember(Order = 1)]
+        [Obsolete("Use ItemPacketRefs instead. Items will be removed in next MAJOR version.")]
         public List<FrameworkItemPayload> Items { get; set; } = new List<FrameworkItemPayload>();
+
+        [DataMember(Order = 2)]
+        public List<string> ItemPacketRefs { get; set; } = new List<string>();
     }
 
     [DataContract]

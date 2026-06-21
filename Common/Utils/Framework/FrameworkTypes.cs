@@ -38,6 +38,16 @@ namespace Utils.Framework
         Observe = 6
     }
 
+    public enum ItemHandlingResultAction
+    {
+        Continue = 0,
+        Handled = 1,
+        ReplacePayload = 2,
+        SuppressDefault = 3,
+        StopPropagation = 4,
+        LegacyFallback = 5
+    }
+
     public enum ExtensionModuleState
     {
         Unknown,
@@ -127,6 +137,18 @@ namespace Utils.Framework
         void AddServerMessageObserver(IServerMessageObserver observer);
 
         void AddItemCodec(IItemCodec codec);
+
+        void AddClientItemHandler(IClientIncomingItemHandler handler);
+
+        void AddClientOutgoingItemHandler(IClientOutgoingItemHandler handler);
+
+        void AddServerItemHandler(IServerItemHandler handler);
+
+        void AddServerInboundItemInterceptor(IServerInboundItemInterceptor interceptor);
+
+        void AddServerDefaultItemHandler(IServerDefaultItemHandler handler);
+
+        void AddServerItemObserver(IServerItemObserver observer);
 
         void AddClientCommandHandler(IClientCommandHandler handler);
 
@@ -540,6 +562,55 @@ namespace Utils.Framework
         object Decode(FrameworkItemPayload payload, ItemCodecContext context);
     }
 
+    public interface IItemCodecProvider
+    {
+        IReadOnlyList<IItemCodec> ItemCodecs { get; }
+    }
+
+    public interface IItemHandler
+    {
+        int Priority { get; }
+    }
+
+    public interface IClientIncomingItemHandler : IItemHandler
+    {
+        bool CanHandleIncomingItem(FrameworkPacket itemPacket);
+
+        ClientIncomingItemResult HandleIncomingItem(FrameworkPacket itemPacket, ClientFrameworkContext context);
+    }
+
+    public interface IClientOutgoingItemHandler : IItemHandler
+    {
+        bool CanHandleOutgoingItem(FrameworkItemPayload itemPayload);
+
+        ClientOutgoingItemResult HandleOutgoingItem(FrameworkItemPayload itemPayload, ClientFrameworkContext context);
+    }
+
+    public interface IServerItemHandler : IItemHandler
+    {
+        bool CanHandleIncomingItem(FrameworkPacket itemPacket);
+
+        ServerIncomingItemResult HandleIncomingItem(FrameworkPacket itemPacket, ServerFrameworkContext context, IReadOnlyList<IItemCodec> codecs);
+    }
+
+    public interface IServerInboundItemInterceptor : IItemHandler
+    {
+        bool CanInterceptIncomingItem(FrameworkPacket itemPacket);
+
+        ServerIncomingItemResult InterceptIncomingItem(FrameworkPacket itemPacket, ServerFrameworkContext context);
+    }
+
+    public interface IServerDefaultItemHandler : IServerItemHandler
+    {
+    }
+
+    public interface IServerItemObserver : IItemHandler
+    {
+        bool CanObserveIncomingItem(FrameworkPacket itemPacket);
+
+        void ObserveIncomingItem(FrameworkPacket itemPacket, ServerFrameworkContext context, ItemHandlingResultAction terminalAction);
+    }
+
     public interface ICommandHandler
     {
         int Priority { get; }
@@ -649,6 +720,39 @@ namespace Utils.Framework
         public MessageHandlingResultAction Action { get; set; } = MessageHandlingResultAction.Handled;
 
         public FrameworkPacket Command { get; set; }
+    }
+
+    public sealed class ClientIncomingItemResult
+    {
+        public ItemHandlingResultAction Action { get; set; } = ItemHandlingResultAction.Handled;
+
+        public FrameworkPacket Item { get; set; }
+
+        public FrameworkDisplayMessage DisplayMessage { get; set; }
+    }
+
+    public sealed class ClientOutgoingItemResult
+    {
+        public ItemHandlingResultAction Action { get; set; } = ItemHandlingResultAction.Handled;
+
+        public FrameworkPacket Item { get; set; }
+    }
+
+    public sealed class ServerIncomingItemResult
+    {
+        public ItemHandlingResultAction Action { get; set; } = ItemHandlingResultAction.Handled;
+
+        public FrameworkPacket Item { get; set; }
+
+        public FrameworkItemPayload ReplacedPayload { get; set; }
+
+        public object DecodedItem { get; set; }
+
+        public string HandledByHandlerId { get; set; }
+
+        public string FailureReason { get; set; }
+
+        public Exception FailureException { get; set; }
     }
 
     public sealed class ServerOutgoingPacketResult
@@ -788,6 +892,18 @@ namespace Utils.Framework
         public List<IServerMessageObserver> ServerMessageObservers { get; } = new List<IServerMessageObserver>();
 
         public List<IItemCodec> ItemCodecs { get; } = new List<IItemCodec>();
+
+        public List<IClientIncomingItemHandler> ClientIncomingItemHandlers { get; } = new List<IClientIncomingItemHandler>();
+
+        public List<IClientOutgoingItemHandler> ClientOutgoingItemHandlers { get; } = new List<IClientOutgoingItemHandler>();
+
+        public List<IServerItemHandler> ServerItemHandlers { get; } = new List<IServerItemHandler>();
+
+        public List<IServerInboundItemInterceptor> ServerInboundItemInterceptors { get; } = new List<IServerInboundItemInterceptor>();
+
+        public List<IServerDefaultItemHandler> ServerDefaultItemHandlers { get; } = new List<IServerDefaultItemHandler>();
+
+        public List<IServerItemObserver> ServerItemObservers { get; } = new List<IServerItemObserver>();
 
         public List<IClientCommandHandler> ClientCommandHandlers { get; } = new List<IClientCommandHandler>();
 

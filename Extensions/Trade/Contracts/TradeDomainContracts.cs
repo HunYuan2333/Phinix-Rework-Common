@@ -251,7 +251,9 @@ namespace Phinix.TradeExtension.Client
         bool TryGetItemsOnOffer(string tradeId, string partyUuid, out IEnumerable<PhinixClient.Trade.TradeItemSnapshot> items);
         FrameworkPacket CreateSnapshotRequestPacket(string sessionId, string senderUuid);
         FrameworkPacket CreateTradeRequest(string otherPartyUuid, ClientFrameworkContext context);
+        FrameworkItemPayload[] EncodeTradeItems(IEnumerable<PhinixClient.Trade.TradeItemSnapshot> tradeItems);
         FrameworkPacket CreateOfferUpdateRequest(string tradeId, IEnumerable<PhinixClient.Trade.TradeItemSnapshot> tradeItems, ClientFrameworkContext context);
+        FrameworkPacket CreateOfferUpdateRequest(string tradeId, IEnumerable<string> itemPacketRefs, ClientFrameworkContext context);
         FrameworkPacket CreateStatusUpdateRequest(string tradeId, bool? accepted, bool? cancelled, ClientFrameworkContext context);
         void TrackPendingTradeUpdate(string tradeId, string token);
         void HandleSnapshot(FrameworkPacket packet);
