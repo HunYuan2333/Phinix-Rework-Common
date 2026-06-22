@@ -9,8 +9,14 @@ message BuiltInChatMessagePayload {
   string sender_uuid = 2;
   string message = 3;
   google.protobuf.Timestamp timestamp = 4;
+  repeated string mentioned_uuids = 5;
+  string reply_to_message_id = 6;
+  string reply_to_snippet = 7;
+  bool is_notice = 8;
+  int32 notice_duration_seconds = 9;
 }
 
 message BuiltInChatHistoryStore {
   repeated BuiltInChatMessagePayload chat_messages = 1;
+  repeated BuiltInChatMessagePayload notices = 2;
 }

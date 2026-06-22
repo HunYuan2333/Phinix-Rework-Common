@@ -9,7 +9,41 @@ namespace Utils.Framework
     public static class ExtensionAssemblyLoader
     {
         private static readonly HashSet<string> probeDirectoriesStore = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, string> assemblyFileCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private static readonly object assemblyFileCacheLock = new object();
         private static bool resolveHandlerWired;
+
+        private static void RebuildAssemblyFileCache()
+        {
+            lock (assemblyFileCacheLock)
+            {
+                assemblyFileCache.Clear();
+                foreach (string probeDir in probeDirectoriesStore)
+                {
+                    if (!Directory.Exists(probeDir)) continue;
+                    foreach (string existingPath in Directory.EnumerateFiles(probeDir, "*.dll", SearchOption.TopDirectoryOnly))
+                    {
+                        string existingName = Path.GetFileNameWithoutExtension(existingPath);
+                        // Also index by stripped name (e.g. "Utils" from "03-Utils.dll")
+                        int dashIndex = existingName.IndexOf('-');
+                        string baseName = dashIndex > 0 && dashIndex <= 3 && existingName.Substring(0, dashIndex).All(char.IsDigit)
+                            ? existingName.Substring(dashIndex + 1)
+                            : null;
+                        if (baseName != null)
+                            assemblyFileCache[baseName] = existingPath;
+                        assemblyFileCache[existingName] = existingPath;
+                    }
+                }
+            }
+        }
+
+        private static bool TryGetCachedAssemblyPath(string assemblyName, out string path)
+        {
+            lock (assemblyFileCacheLock)
+            {
+                return assemblyFileCache.TryGetValue(assemblyName, out path);
+            }
+        }
 
         public static void LoadAssemblies(IEnumerable<string> probeDirectories, Action<string, LogLevel> log = null)
         {
@@ -36,9 +70,23 @@ namespace Utils.Framework
             if (!resolveHandlerWired)
             {
                 resolveHandlerWired = true;
+                RebuildAssemblyFileCache();
                 AppDomain.CurrentDomain.AssemblyResolve += (sender, args) =>
                 {
                     AssemblyName requestedName = new AssemblyName(args.Name);
+
+                    // Fast path: check the cached file index first (O(1) dictionary lookup)
+                    if (TryGetCachedAssemblyPath(requestedName.Name, out string cachedPath) && File.Exists(cachedPath))
+                    {
+                        log?.Invoke($"AssemblyResolve: loading '{requestedName.Name}' from '{cachedPath}' (cached).", LogLevel.DEBUG);
+                        try { return Assembly.LoadFrom(cachedPath); }
+                        catch (Exception ex)
+                        {
+                            log?.Invoke($"AssemblyResolve: failed to load '{cachedPath}': {ex.Message}", LogLevel.WARNING);
+                        }
+                    }
+
+                    // Slow path: probe directory scan (fallback if cache miss due to late-added DLLs)
                     foreach (string probeDir in probeDirectoriesStore)
                     {
                         if (!Directory.Exists(probeDir)) continue;

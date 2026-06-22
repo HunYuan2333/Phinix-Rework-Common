@@ -91,6 +91,18 @@ namespace Utils.Framework
         void Send(string connectionId, FrameworkPacket packet, string sourceExtensionId);
     }
 
+    public interface IFrameworkServerBroadcaster
+    {
+        void Broadcast(string sourceExtensionId, FrameworkPacket packet, string[] excludedConnectionIds = null);
+    }
+
+    public interface IServerConsoleCommandProvider
+    {
+        string CommandName { get; }
+
+        bool Execute(List<string> args);
+    }
+
     public interface IExtensionConfigSection
     {
         string SectionName { get; }
@@ -161,6 +173,8 @@ namespace Utils.Framework
         void AddServerCommandObserver(IServerCommandObserver observer);
 
         void AddServerOutboundPacketInterceptor(IServerOutboundPacketInterceptor interceptor);
+
+        void AddConsoleCommandProvider(IServerConsoleCommandProvider provider);
 
         void RegisterApi<T>(T implementation) where T : class;
 
@@ -916,6 +930,8 @@ namespace Utils.Framework
         public List<IServerCommandObserver> ServerCommandObservers { get; } = new List<IServerCommandObserver>();
 
         public List<IServerOutboundPacketInterceptor> ServerOutboundPacketInterceptors { get; } = new List<IServerOutboundPacketInterceptor>();
+
+        public List<IServerConsoleCommandProvider> ConsoleCommandProviders { get; } = new List<IServerConsoleCommandProvider>();
 
     }
 }
