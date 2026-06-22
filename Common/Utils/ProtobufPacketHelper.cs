@@ -28,8 +28,15 @@ namespace Utils
             // Make sure the packet is destined for this module, just in case
             if (!targetModule.Equals(module)) return false;
             
-            // Parse the incoming message
-            parsedMessage = Any.Parser.ParseFrom(data);
+            // Parse the incoming message — protect against malformed data per SS3.5
+            try
+            {
+                parsedMessage = Any.Parser.ParseFrom(data);
+            }
+            catch (InvalidProtocolBufferException)
+            {
+                return false;
+            }
             
             // Get the TypeUrl from the message to help determine what it actually is
             try

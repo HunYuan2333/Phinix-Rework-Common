@@ -26,6 +26,11 @@ namespace PhinixClient
         public UIChatMessageStatus Status;
         public ImmutableUser User;
         public string Source;
+        public List<string> MentionedUuids;
+        public string ReplyToMessageId;
+        public string ReplyToSnippet;
+        public bool IsNotice;
+        public int NoticeDurationSeconds;
 
         public UIChatMessage(
             string messageId,
@@ -83,6 +88,8 @@ namespace Phinix.ChatExtension.Client
     {
         FrameworkPacket CreateOutgoingMessage(string rawMessage, ClientFrameworkContext context);
 
+        FrameworkPacket CreateOutgoingMessage(string rawMessage, ClientFrameworkContext context, IEnumerable<string> mentionedUuids, string replyToMessageId, string replyToSnippet);
+
         FrameworkDisplayMessage RenderMessage(FrameworkPacket message);
 
         FrameworkPacket CreateHistoryRequestPacket(string sessionId, string senderUuid);
@@ -129,6 +136,16 @@ namespace Phinix.ChatExtension.Client
         void UnBlockUser(string uuid);
 
         void Log(LogEventArgs args);
+
+        UIChatMessage ReplyTarget { get; }
+
+        void SetReplyTarget(UIChatMessage message);
+
+        void ClearReplyTarget();
+
+        event EventHandler ReplyTargetChanged;
+
+        void SendChatMessage(string text, IEnumerable<string> mentionedUuids);
     }
 #endif
 }

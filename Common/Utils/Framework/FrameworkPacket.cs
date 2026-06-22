@@ -88,6 +88,21 @@ namespace Utils.Framework
 
         [DataMember(Order = 7)]
         public List<string> TranslationArgs { get; set; } = new List<string>();
+
+        [DataMember(Order = 8)]
+        public List<string> MentionedUuids { get; set; } = new List<string>();
+
+        [DataMember(Order = 9)]
+        public string ReplyToMessageId { get; set; }
+
+        [DataMember(Order = 10)]
+        public string ReplyToSnippet { get; set; }
+
+        [DataMember(Order = 11)]
+        public bool IsNotice { get; set; }
+
+        [DataMember(Order = 12)]
+        public int NoticeDurationSeconds { get; set; }
     }
 
     [DataContract]

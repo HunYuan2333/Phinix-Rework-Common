@@ -25,17 +25,19 @@ namespace Phinix.Framework {
       byte[] descriptorData = global::System.Convert.FromBase64String(
           string.Concat(
             "ChlNZXNzYWdlL0J1aWx0SW5DaGF0LnByb3RvEhBQaGluaXguRnJhbWV3b3Jr",
-            "Gh9nb29nbGUvcHJvdG9idWYvdGltZXN0YW1wLnByb3RvIoQBChlCdWlsdElu",
+            "Gh9nb29nbGUvcHJvdG9idWYvdGltZXN0YW1wLnByb3RvIogCChlCdWlsdElu",
             "Q2hhdE1lc3NhZ2VQYXlsb2FkEhIKCm1lc3NhZ2VfaWQYASABKAkSEwoLc2Vu",
             "ZGVyX3V1aWQYAiABKAkSDwoHbWVzc2FnZRgDIAEoCRItCgl0aW1lc3RhbXAY",
-            "BCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIl0KF0J1aWx0SW5D",
-            "aGF0SGlzdG9yeVN0b3JlEkIKDWNoYXRfbWVzc2FnZXMYASADKAsyKy5QaGlu",
-            "aXguRnJhbWV3b3JrLkJ1aWx0SW5DaGF0TWVzc2FnZVBheWxvYWRiBnByb3Rv",
-            "Mw=="));
+            "BCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhcKD21lbnRpb25l",
+            "ZF91dWlkcxgFIAMoCRIbChNyZXBseV90b19tZXNzYWdlX2lkGAYgASgJEhgK",
+            "EHJlcGx5X3RvX3NuaXBwZXQYByABKAkSEQoJaXNfbm90aWNlGAggASgIEh8K",
+            "F25vdGljZV9kdXJhdGlvbl9zZWNvbmRzGAkgASgFIl0KF0J1aWx0SW5DaGF0",
+            "SGlzdG9yeVN0b3JlEkIKDWNoYXRfbWVzc2FnZXMYASADKAsyKy5QaGluaXgu",
+            "RnJhbWV3b3JrLkJ1aWx0SW5DaGF0TWVzc2FnZVBheWxvYWRiBnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.TimestampReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
-            new pbr::GeneratedClrTypeInfo(typeof(global::Phinix.Framework.BuiltInChatMessagePayload), global::Phinix.Framework.BuiltInChatMessagePayload.Parser, new[]{ "MessageId", "SenderUuid", "Message", "Timestamp" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Phinix.Framework.BuiltInChatMessagePayload), global::Phinix.Framework.BuiltInChatMessagePayload.Parser, new[]{ "MessageId", "SenderUuid", "Message", "Timestamp", "MentionedUuids", "ReplyToMessageId", "ReplyToSnippet", "IsNotice", "NoticeDurationSeconds" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Phinix.Framework.BuiltInChatHistoryStore), global::Phinix.Framework.BuiltInChatHistoryStore.Parser, new[]{ "ChatMessages" }, null, null, null, null)
           }));
     }
@@ -82,6 +84,11 @@ namespace Phinix.Framework {
       senderUuid_ = other.senderUuid_;
       message_ = other.message_;
       timestamp_ = other.timestamp_ != null ? other.timestamp_.Clone() : null;
+      mentionedUuids_ = other.mentionedUuids_.Clone();
+      replyToMessageId_ = other.replyToMessageId_;
+      replyToSnippet_ = other.replyToSnippet_;
+      isNotice_ = other.isNotice_;
+      noticeDurationSeconds_ = other.noticeDurationSeconds_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -139,6 +146,65 @@ namespace Phinix.Framework {
       }
     }
 
+    /// <summary>Field number for the "mentioned_uuids" field.</summary>
+    public const int MentionedUuidsFieldNumber = 5;
+    private static readonly pb::FieldCodec<string> _repeated_mentionedUuids_codec
+        = pb::FieldCodec.ForString(42);
+    private readonly pbc::RepeatedField<string> mentionedUuids_ = new pbc::RepeatedField<string>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<string> MentionedUuids {
+      get { return mentionedUuids_; }
+    }
+
+    /// <summary>Field number for the "reply_to_message_id" field.</summary>
+    public const int ReplyToMessageIdFieldNumber = 6;
+    private string replyToMessageId_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string ReplyToMessageId {
+      get { return replyToMessageId_; }
+      set {
+        replyToMessageId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "reply_to_snippet" field.</summary>
+    public const int ReplyToSnippetFieldNumber = 7;
+    private string replyToSnippet_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string ReplyToSnippet {
+      get { return replyToSnippet_; }
+      set {
+        replyToSnippet_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "is_notice" field.</summary>
+    public const int IsNoticeFieldNumber = 8;
+    private bool isNotice_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool IsNotice {
+      get { return isNotice_; }
+      set {
+        isNotice_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "notice_duration_seconds" field.</summary>
+    public const int NoticeDurationSecondsFieldNumber = 9;
+    private int noticeDurationSeconds_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int NoticeDurationSeconds {
+      get { return noticeDurationSeconds_; }
+      set {
+        noticeDurationSeconds_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -158,6 +224,11 @@ namespace Phinix.Framework {
       if (SenderUuid != other.SenderUuid) return false;
       if (Message != other.Message) return false;
       if (!object.Equals(Timestamp, other.Timestamp)) return false;
+      if(!mentionedUuids_.Equals(other.mentionedUuids_)) return false;
+      if (ReplyToMessageId != other.ReplyToMessageId) return false;
+      if (ReplyToSnippet != other.ReplyToSnippet) return false;
+      if (IsNotice != other.IsNotice) return false;
+      if (NoticeDurationSeconds != other.NoticeDurationSeconds) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -169,6 +240,11 @@ namespace Phinix.Framework {
       if (SenderUuid.Length != 0) hash ^= SenderUuid.GetHashCode();
       if (Message.Length != 0) hash ^= Message.GetHashCode();
       if (timestamp_ != null) hash ^= Timestamp.GetHashCode();
+      hash ^= mentionedUuids_.GetHashCode();
+      if (ReplyToMessageId.Length != 0) hash ^= ReplyToMessageId.GetHashCode();
+      if (ReplyToSnippet.Length != 0) hash ^= ReplyToSnippet.GetHashCode();
+      if (IsNotice != false) hash ^= IsNotice.GetHashCode();
+      if (NoticeDurationSeconds != 0) hash ^= NoticeDurationSeconds.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -203,6 +279,23 @@ namespace Phinix.Framework {
         output.WriteRawTag(34);
         output.WriteMessage(Timestamp);
       }
+      mentionedUuids_.WriteTo(output, _repeated_mentionedUuids_codec);
+      if (ReplyToMessageId.Length != 0) {
+        output.WriteRawTag(50);
+        output.WriteString(ReplyToMessageId);
+      }
+      if (ReplyToSnippet.Length != 0) {
+        output.WriteRawTag(58);
+        output.WriteString(ReplyToSnippet);
+      }
+      if (IsNotice != false) {
+        output.WriteRawTag(64);
+        output.WriteBool(IsNotice);
+      }
+      if (NoticeDurationSeconds != 0) {
+        output.WriteRawTag(72);
+        output.WriteInt32(NoticeDurationSeconds);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -229,6 +322,23 @@ namespace Phinix.Framework {
         output.WriteRawTag(34);
         output.WriteMessage(Timestamp);
       }
+      mentionedUuids_.WriteTo(ref output, _repeated_mentionedUuids_codec);
+      if (ReplyToMessageId.Length != 0) {
+        output.WriteRawTag(50);
+        output.WriteString(ReplyToMessageId);
+      }
+      if (ReplyToSnippet.Length != 0) {
+        output.WriteRawTag(58);
+        output.WriteString(ReplyToSnippet);
+      }
+      if (IsNotice != false) {
+        output.WriteRawTag(64);
+        output.WriteBool(IsNotice);
+      }
+      if (NoticeDurationSeconds != 0) {
+        output.WriteRawTag(72);
+        output.WriteInt32(NoticeDurationSeconds);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -250,6 +360,19 @@ namespace Phinix.Framework {
       }
       if (timestamp_ != null) {
         size += 1 + pb::CodedOutputStream.ComputeMessageSize(Timestamp);
+      }
+      size += mentionedUuids_.CalculateSize(_repeated_mentionedUuids_codec);
+      if (ReplyToMessageId.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(ReplyToMessageId);
+      }
+      if (ReplyToSnippet.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(ReplyToSnippet);
+      }
+      if (IsNotice != false) {
+        size += 1 + 1;
+      }
+      if (NoticeDurationSeconds != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(NoticeDurationSeconds);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -277,6 +400,19 @@ namespace Phinix.Framework {
           Timestamp = new global::Google.Protobuf.WellKnownTypes.Timestamp();
         }
         Timestamp.MergeFrom(other.Timestamp);
+      }
+      mentionedUuids_.Add(other.mentionedUuids_);
+      if (other.ReplyToMessageId.Length != 0) {
+        ReplyToMessageId = other.ReplyToMessageId;
+      }
+      if (other.ReplyToSnippet.Length != 0) {
+        ReplyToSnippet = other.ReplyToSnippet;
+      }
+      if (other.IsNotice != false) {
+        IsNotice = other.IsNotice;
+      }
+      if (other.NoticeDurationSeconds != 0) {
+        NoticeDurationSeconds = other.NoticeDurationSeconds;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -316,6 +452,26 @@ namespace Phinix.Framework {
             input.ReadMessage(Timestamp);
             break;
           }
+          case 42: {
+            mentionedUuids_.AddEntriesFrom(input, _repeated_mentionedUuids_codec);
+            break;
+          }
+          case 50: {
+            ReplyToMessageId = input.ReadString();
+            break;
+          }
+          case 58: {
+            ReplyToSnippet = input.ReadString();
+            break;
+          }
+          case 64: {
+            IsNotice = input.ReadBool();
+            break;
+          }
+          case 72: {
+            NoticeDurationSeconds = input.ReadInt32();
+            break;
+          }
         }
       }
     #endif
@@ -352,6 +508,26 @@ namespace Phinix.Framework {
               Timestamp = new global::Google.Protobuf.WellKnownTypes.Timestamp();
             }
             input.ReadMessage(Timestamp);
+            break;
+          }
+          case 42: {
+            mentionedUuids_.AddEntriesFrom(ref input, _repeated_mentionedUuids_codec);
+            break;
+          }
+          case 50: {
+            ReplyToMessageId = input.ReadString();
+            break;
+          }
+          case 58: {
+            ReplyToSnippet = input.ReadString();
+            break;
+          }
+          case 64: {
+            IsNotice = input.ReadBool();
+            break;
+          }
+          case 72: {
+            NoticeDurationSeconds = input.ReadInt32();
             break;
           }
         }
@@ -397,6 +573,7 @@ namespace Phinix.Framework {
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public BuiltInChatHistoryStore(BuiltInChatHistoryStore other) : this() {
       chatMessages_ = other.chatMessages_.Clone();
+      notices_ = other.notices_.Clone();
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -417,6 +594,17 @@ namespace Phinix.Framework {
       get { return chatMessages_; }
     }
 
+    /// <summary>Field number for the "notices" field.</summary>
+    public const int NoticesFieldNumber = 2;
+    private static readonly pb::FieldCodec<global::Phinix.Framework.BuiltInChatMessagePayload> _repeated_notices_codec
+        = pb::FieldCodec.ForMessage(18, global::Phinix.Framework.BuiltInChatMessagePayload.Parser);
+    private readonly pbc::RepeatedField<global::Phinix.Framework.BuiltInChatMessagePayload> notices_ = new pbc::RepeatedField<global::Phinix.Framework.BuiltInChatMessagePayload>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::Phinix.Framework.BuiltInChatMessagePayload> Notices {
+      get { return notices_; }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -433,6 +621,7 @@ namespace Phinix.Framework {
         return true;
       }
       if(!chatMessages_.Equals(other.chatMessages_)) return false;
+      if(!notices_.Equals(other.notices_)) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -441,6 +630,7 @@ namespace Phinix.Framework {
     public override int GetHashCode() {
       int hash = 1;
       hash ^= chatMessages_.GetHashCode();
+      hash ^= notices_.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -460,6 +650,7 @@ namespace Phinix.Framework {
       output.WriteRawMessage(this);
     #else
       chatMessages_.WriteTo(output, _repeated_chatMessages_codec);
+      notices_.WriteTo(output, _repeated_notices_codec);
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -471,6 +662,7 @@ namespace Phinix.Framework {
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
       chatMessages_.WriteTo(ref output, _repeated_chatMessages_codec);
+      notices_.WriteTo(ref output, _repeated_notices_codec);
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -482,6 +674,7 @@ namespace Phinix.Framework {
     public int CalculateSize() {
       int size = 0;
       size += chatMessages_.CalculateSize(_repeated_chatMessages_codec);
+      size += notices_.CalculateSize(_repeated_notices_codec);
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
       }
@@ -495,6 +688,7 @@ namespace Phinix.Framework {
         return;
       }
       chatMessages_.Add(other.chatMessages_);
+      notices_.Add(other.notices_);
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
 
@@ -518,6 +712,10 @@ namespace Phinix.Framework {
             chatMessages_.AddEntriesFrom(input, _repeated_chatMessages_codec);
             break;
           }
+          case 18: {
+            notices_.AddEntriesFrom(input, _repeated_notices_codec);
+            break;
+          }
         }
       }
     #endif
@@ -539,6 +737,10 @@ namespace Phinix.Framework {
             break;
           case 10: {
             chatMessages_.AddEntriesFrom(ref input, _repeated_chatMessages_codec);
+            break;
+          }
+          case 18: {
+            notices_.AddEntriesFrom(ref input, _repeated_notices_codec);
             break;
           }
         }

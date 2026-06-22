@@ -385,8 +385,9 @@ namespace Utils.Framework
                     .GetReferencedAssemblies()
                     .Any(reference => string.Equals(reference.Name, frameworkAssemblyName, StringComparison.OrdinalIgnoreCase));
             }
-            catch
+            catch (Exception ex)
             {
+                System.Diagnostics.Debug.WriteLine($"[Phinix] PhinixExtensionRegistry.isCandidateExtensionAssembly failed for '{assembly?.GetName()?.Name}': {ex.Message}");
                 return false;
             }
         }
@@ -506,6 +507,12 @@ namespace Utils.Framework
             public void AddServerCommandObserver(IServerCommandObserver observer) => addIfMissing(discovered.ServerCommandObservers, observer);
 
             public void AddServerOutboundPacketInterceptor(IServerOutboundPacketInterceptor interceptor) => addIfMissing(discovered.ServerOutboundPacketInterceptors, interceptor);
+
+            public void AddConsoleCommandProvider(IServerConsoleCommandProvider provider)
+            {
+                addIfMissing(discovered.ConsoleCommandProviders, provider);
+                apiRegistry.TryRegisterApi(extensionId, provider);
+            }
 
             public void RegisterApi<T>(T implementation) where T : class
             {

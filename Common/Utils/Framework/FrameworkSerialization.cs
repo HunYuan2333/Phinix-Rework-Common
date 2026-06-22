@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.Serialization.Json;
@@ -117,8 +118,11 @@ namespace Utils.Framework
                     payload = FromItemPacket(itemPacket);
                     return true;
                 }
-                catch
+                catch (Exception ex)
                 {
+                    // Protobuf ParseFrom failed — malformed item payload, skip silently
+                    // per design philosophy SS3.5: single message parse failure must not interrupt the pipeline
+                    System.Diagnostics.Debug.WriteLine($"[Phinix] FrameworkSerialization.TryExtractItemPayload: Protobuf parse failed: {ex.Message}");
                 }
             }
 
@@ -129,8 +133,10 @@ namespace Utils.Framework
                     payload = DeserializePayload<FrameworkItemPayload>(packet.PayloadJson);
                     return payload != null;
                 }
-                catch
+                catch (Exception ex)
                 {
+                    // JSON deserialization failed — malformed item payload, skip silently
+                    System.Diagnostics.Debug.WriteLine($"[Phinix] FrameworkSerialization.TryExtractItemPayload: JSON parse failed: {ex.Message}");
                 }
             }
 
@@ -151,9 +157,25 @@ namespace Utils.Framework
             };
         }
 
+        private static readonly Dictionary<System.Type, DataContractJsonSerializer> serializerCache = new Dictionary<System.Type, DataContractJsonSerializer>();
+        private static readonly object serializerCacheLock = new object();
+
+        private static DataContractJsonSerializer GetSerializer(System.Type type)
+        {
+            lock (serializerCacheLock)
+            {
+                if (!serializerCache.TryGetValue(type, out DataContractJsonSerializer serializer))
+                {
+                    serializer = new DataContractJsonSerializer(type);
+                    serializerCache[type] = serializer;
+                }
+                return serializer;
+            }
+        }
+
         private static byte[] Serialize<T>(T value)
         {
-            DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(T));
+            DataContractJsonSerializer serializer = GetSerializer(typeof(T));
             using (MemoryStream ms = new MemoryStream())
             {
                 serializer.WriteObject(ms, value);
@@ -163,7 +185,7 @@ namespace Utils.Framework
 
         private static T Deserialize<T>(byte[] data)
         {
-            DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(T));
+            DataContractJsonSerializer serializer = GetSerializer(typeof(T));
             using (MemoryStream ms = new MemoryStream(data))
             {
                 return (T) serializer.ReadObject(ms);

@@ -6,5 +6,6 @@ namespace Phinix.ChatExtension
         public const string MessageType = "builtin.chat.message";
         public const string HistoryRequestType = "builtin.chat.history.request";
         public const string HistorySyncCompleteType = "builtin.chat.history.sync-complete";
+        public const string NoticeType = "builtin.chat.notice";
     }
 }
