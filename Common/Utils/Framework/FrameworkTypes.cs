@@ -55,7 +55,9 @@ namespace Utils.Framework
         Registered,
         Active,
         Failed,
-        Shutdown
+        Shutdown,
+        Disabled,
+        DependencyDisabled
     }
 
     public interface IPhinixExtension
@@ -495,12 +497,38 @@ namespace Utils.Framework
     {
         public string ExtensionId { get; }
 
+        /// <summary>该扩展声明依赖的其他扩展 ID（ExtensionId 字符串匹配）。</summary>
+        public string[] DependsOn { get; set; } = Array.Empty<string>();
+
         public PhinixExtensionAttribute(string extensionId)
         {
             if (string.IsNullOrEmpty(extensionId)) throw new ArgumentException("Extension ID cannot be null or empty.", nameof(extensionId));
 
             ExtensionId = extensionId;
         }
+    }
+
+    /// <summary>
+    /// 决定一个已发现的扩展是否应被激活。
+    /// v1 使用 <see cref="StaticActivationPolicy"/>（从设置读取一次性快照）。
+    /// v2 可替换为运行时可变实现，支持运行时激活/关闭扩展。
+    /// 设计哲学 §2.1 松耦合：发现机制通过此接口咨询，不绑定具体实现。
+    /// </summary>
+    public interface IExtensionActivationPolicy
+    {
+        /// <summary>
+        /// 判断指定扩展是否应被激活。在 DiscoverExtensions 实例化模块之前调用。
+        /// </summary>
+        /// <param name="extensionId">扩展唯一标识符</param>
+        /// <param name="reason">若返回 false，输出不激活的原因（用于日志和 UI 展示）</param>
+        /// <returns>true 表示应激活；false 表示应跳过</returns>
+        bool ShouldActivate(string extensionId, out string reason);
+
+        /// <summary>
+        /// 当前被用户显式禁用的扩展 ID 快照（不含因依赖被禁用而连锁的）。
+        /// 用于 UI 展示和区分 <see cref="ExtensionModuleState.Disabled"/> 与 <see cref="ExtensionModuleState.DependencyDisabled"/>。
+        /// </summary>
+        IReadOnlyCollection<string> DisabledExtensions { get; }
     }
 
     public interface ICapabilityProvider
@@ -855,6 +883,7 @@ namespace Utils.Framework
         public string SourcePackageId { get; set; }
         public List<string> RegisteredApis { get; set; } = new List<string>();
         public List<string> ConsumedApis { get; set; } = new List<string>();
+        public List<string> DependsOn { get; set; } = new List<string>();
 
         public static ExtensionDiscoveryResult FromModuleType(Type moduleType, ExtensionHostContext hostContext)
         {
@@ -875,6 +904,29 @@ namespace Utils.Framework
         }
     }
 
+    /// <summary>
+    /// 扩展管理面板日志条目。由框架客户端的 RaiseLogEntry 写入有界环形缓冲，
+    /// ExtensionManagerTab 只读快照渲染。设计哲学 §3.6：缓冲有容量上限，防止无限增长。
+    /// </summary>
+    public sealed class FrameworkLogEntry
+    {
+        public FrameworkLogEntry(string message, LogLevel level, long timestampUtcTicks)
+        {
+            Message = message ?? string.Empty;
+            Level = level;
+            TimestampUtcTicks = timestampUtcTicks;
+        }
+
+        /// <summary>日志文本（不含时间戳前缀，时间戳前缀由 UI 渲染时拼接）。</summary>
+        public string Message { get; }
+
+        /// <summary>日志级别，用于 UI 着色。</summary>
+        public LogLevel Level { get; }
+
+        /// <summary>UTC ticks，用于 UI 显示本地时间。</summary>
+        public long TimestampUtcTicks { get; }
+    }
+
     public sealed class DiscoveredPhinixExtensions
     {
         public IExtensionApiRegistry ApiRegistry { get; internal set; } = new ExtensionApiRegistry();
@@ -888,6 +940,11 @@ namespace Utils.Framework
         public List<string> Warnings { get; } = new List<string>();
 
         public List<ExtensionDiscoveryResult> ExtensionResults { get; } = new List<ExtensionDiscoveryResult>();
+
+        /// <summary>
+        /// 本次发现过程中构建的扩展依赖图。纯反射构建，用于 UI 展示依赖关系和禁用影响。
+        /// </summary>
+        public ExtensionDependencyGraph DependencyGraph { get; internal set; }
 
         public List<ICapabilityProvider> CapabilityProviders { get; } = new List<ICapabilityProvider>();
 

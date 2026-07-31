@@ -7,7 +7,32 @@ namespace Utils.Framework
 {
     public static class PhinixExtensionRegistry
     {
+        /// <summary>
+        /// 扫描已加载程序集中的候选扩展模块类型（IPhinixExtensionModule 可分配、有无参构造），
+        /// 按 Type.FullName 字母序排序。纯反射，不实例化任何模块。
+        /// 设计哲学 §4.7：供 host 在 DiscoverExtensions 之前构建依赖图和激活策略。
+        /// </summary>
+        public static List<Type> ScanCandidateModuleTypes()
+        {
+            return scanCandidateTypes()
+                .Where(type => typeof(IPhinixExtensionModule).IsAssignableFrom(type))
+                .OrderBy(type => type.FullName, StringComparer.Ordinal)
+                .ToList();
+        }
+
         public static DiscoveredPhinixExtensions DiscoverExtensions(ExtensionHostContext hostContext = null)
+        {
+            return DiscoverExtensions(hostContext, activationPolicy: null);
+        }
+
+        /// <summary>
+        /// 带激活策略的扩展发现重载。policy 为 null 时尝试从 hostContext 服务容器解析；
+        /// 仍为 null 则全部激活（行为与原签名一致——向后兼容）。
+        /// 设计哲学 §6：保留原签名，新增重载，不破坏既有调用点。
+        /// </summary>
+        public static DiscoveredPhinixExtensions DiscoverExtensions(
+            ExtensionHostContext hostContext,
+            IExtensionActivationPolicy activationPolicy)
         {
             hostContext = hostContext ?? ExtensionHostContext.Empty;
             DiscoveredPhinixExtensions discovered = new DiscoveredPhinixExtensions();
@@ -16,21 +41,61 @@ namespace Utils.Framework
             discovered.ApiRegistry = apiRegistry;
             HashSet<string> seenExtensionIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            List<Type> candidateTypes = AppDomain.CurrentDomain
-                .GetAssemblies()
-                .Where(isCandidateExtensionAssembly)
-                .SelectMany(getLoadableTypes)
-                .Where(type => type.IsClass && !type.IsAbstract && type.GetConstructor(Type.EmptyTypes) != null)
-                .ToList();
+            List<Type> candidateTypes = scanCandidateTypes();
 
             List<Type> moduleTypes = candidateTypes
                 .Where(type => typeof(IPhinixExtensionModule).IsAssignableFrom(type))
                 .OrderBy(type => type.FullName, StringComparer.Ordinal)
                 .ToList();
 
+            // 构建依赖图（纯反射，不实例化模块）——供 UI 展示依赖关系和禁用影响
+            ExtensionDependencyGraph dependencyGraph = ExtensionDependencyGraph.Build(moduleTypes);
+            discovered.DependencyGraph = dependencyGraph;
+            foreach (string graphWarning in dependencyGraph.BuildWarnings)
+            {
+                discovered.Warnings.Add(graphWarning);
+            }
+
+            // 如果未显式提供 policy，从 hostContext 服务容器解析
+            if (activationPolicy == null)
+            {
+                hostContext.TryGetService<IExtensionActivationPolicy>(out activationPolicy);
+            }
+
             foreach (Type moduleType in moduleTypes)
             {
                 ExtensionDiscoveryResult result = ExtensionDiscoveryResult.FromModuleType(moduleType, hostContext);
+
+                // 在实例化之前从特性读取 ExtensionId 和 DependsOn（被禁用的模块不会实例化）
+                PhinixExtensionAttribute attr = moduleType.GetCustomAttribute<PhinixExtensionAttribute>();
+                string extensionId = attr?.ExtensionId ?? moduleType.Name;
+                result.ExtensionId = extensionId;
+                if (attr?.DependsOn != null && attr.DependsOn.Length > 0)
+                {
+                    result.DependsOn = new List<string>(attr.DependsOn);
+                }
+
+                // 咨询激活策略——被禁用的扩展不实例化，但仍创建 ExtensionResult 供 UI 展示
+                if (activationPolicy != null && !activationPolicy.ShouldActivate(extensionId, out string reason))
+                {
+                    bool isDirectlyDisabled = false;
+                    foreach (string disabledId in activationPolicy.DisabledExtensions)
+                    {
+                        if (string.Equals(disabledId, extensionId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            isDirectlyDisabled = true;
+                            break;
+                        }
+                    }
+                    result.State = isDirectlyDisabled
+                        ? ExtensionModuleState.Disabled
+                        : ExtensionModuleState.DependencyDisabled;
+                    result.StateDetail = reason;
+                    discovered.ExtensionResults.Add(result);
+                    discovered.Diagnostics.Add(
+                        $"Skipped extension '{extensionId}': {reason}");
+                    continue;
+                }
 
                 IPhinixExtensionModule module;
                 try
@@ -337,6 +402,16 @@ namespace Utils.Framework
             }
 
             return capabilities.OrderBy(capability => capability).ToArray();
+        }
+
+        private static List<Type> scanCandidateTypes()
+        {
+            return AppDomain.CurrentDomain
+                .GetAssemblies()
+                .Where(isCandidateExtensionAssembly)
+                .SelectMany(getLoadableTypes)
+                .Where(type => type.IsClass && !type.IsAbstract && type.GetConstructor(Type.EmptyTypes) != null)
+                .ToList();
         }
 
         private static IEnumerable<Type> getLoadableTypes(Assembly assembly)

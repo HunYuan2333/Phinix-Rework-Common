@@ -58,8 +58,10 @@ namespace Utils.Framework
                     PhinixExtensionAttribute attr = moduleType.GetCustomAttribute<PhinixExtensionAttribute>();
                     extensionId = attr?.ExtensionId ?? moduleType.Name;
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
+                    // §3.5 错误隔离：单个类型元数据读取失败不中断构建，但必须可观测
+                    warnings.Add($"Failed to read extension ID from '{moduleType.FullName}': {ex.GetType().Name}: {ex.Message}");
                     continue;
                 }
 
@@ -69,8 +71,9 @@ namespace Utils.Framework
                     PhinixExtensionAttribute attr = moduleType.GetCustomAttribute<PhinixExtensionAttribute>();
                     declaredDeps = attr?.DependsOn ?? Array.Empty<string>();
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
+                    warnings.Add($"Failed to read DependsOn from '{moduleType.FullName}': {ex.GetType().Name}: {ex.Message}");
                     declaredDeps = Array.Empty<string>();
                 }
 
