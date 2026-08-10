@@ -118,6 +118,9 @@ namespace Phinix.ChatExtension.Client
         bool ShowNameFormatting { get; }
 
         bool ShowChatFormatting { get; }
+        bool ShowImages { get; }
+
+        float MaxImageHeight { get; }
 
         ISet<string> BlockedUsers { get; }
 
