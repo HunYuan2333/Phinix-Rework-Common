@@ -124,6 +124,13 @@ namespace Phinix.ChatExtension.Client
 
         ISet<string> BlockedUsers { get; }
 
+        /// <summary>
+        /// 当前会话是否已连接并登录（Authenticated &amp;&amp; LoggedIn）。
+        /// 用于让聊天列表在"上线"瞬间从消息存储重新同步一次，
+        /// 避免启动时就链接、进入存档后 UI 未初始化（UI 与后端不同步）。
+        /// </summary>
+        bool IsOnline { get; }
+
         event EventHandler OnDisconnect;
 
         event EventHandler OnUsersChanged;

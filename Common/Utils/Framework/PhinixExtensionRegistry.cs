@@ -90,10 +90,12 @@ namespace Utils.Framework
                     result.State = isDirectlyDisabled
                         ? ExtensionModuleState.Disabled
                         : ExtensionModuleState.DependencyDisabled;
-                    result.StateDetail = reason;
+                    result.StateDetail = isDirectlyDisabled
+                        ? $"{reason} Enable it in Phinix mod settings → Extensions to activate its features."
+                        : $"{reason} (a required dependency is missing or disabled, so this extension will not run).";
                     discovered.ExtensionResults.Add(result);
                     discovered.Diagnostics.Add(
-                        $"Skipped extension '{extensionId}': {reason}");
+                        $"Extension '{extensionId}' will NOT be loaded: {result.StateDetail}");
                     continue;
                 }
 
@@ -105,16 +107,16 @@ namespace Utils.Framework
                 catch (Exception exception)
                 {
                     result.State = ExtensionModuleState.Failed;
-                    result.StateDetail = $"Failed to initialize: {exception.Message}";
+                    result.StateDetail = $"FAILED to initialize: {exception.Message}";
                     discovered.ExtensionResults.Add(result);
-                    discovered.Warnings.Add($"Failed to initialize extension module '{moduleType.FullName}': {exception.Message}");
+                    discovered.Warnings.Add($"Extension '{extensionId}' FAILED to load (this is a bug, please report it): {exception.Message}");
                     continue;
                 }
 
                 if (module == null)
                 {
                     result.State = ExtensionModuleState.Failed;
-                    result.StateDetail = "Activator.CreateInstance returned null (not IPhinixExtensionModule).";
+                    result.StateDetail = "FAILED to load: Activator.CreateInstance returned null (type is not IPhinixExtensionModule).";
                     discovered.ExtensionResults.Add(result);
                     continue;
                 }
@@ -141,8 +143,8 @@ namespace Utils.Framework
                 catch (Exception exception)
                 {
                     result.State = ExtensionModuleState.Failed;
-                    result.StateDetail = $"Register() threw: {exception.Message}";
-                    discovered.Warnings.Add($"Failed to register extension module '{moduleType.FullName}': {exception.Message}");
+                    result.StateDetail = $"FAILED to register: {exception.Message}";
+                    discovered.Warnings.Add($"Extension '{module.ExtensionId}' FAILED to register (this is a bug, please report it): {exception.Message}");
                 }
 
                 discovered.ExtensionResults.Add(result);
@@ -343,9 +345,9 @@ namespace Utils.Framework
                     if (result != null)
                     {
                         result.State = ExtensionModuleState.Failed;
-                        result.StateDetail = $"Activate() threw: {exception.Message}";
+                        result.StateDetail = $"FAILED to activate: {exception.Message}";
                     }
-                    discovered.Warnings.Add($"Failed to activate extension module '{module.ExtensionId}': {exception.Message}");
+                    discovered.Warnings.Add($"Extension '{module.ExtensionId}' FAILED to activate (this is a bug, please report it): {exception.Message}");
                 }
             }
         }
@@ -370,9 +372,9 @@ namespace Utils.Framework
                     if (result != null)
                     {
                         result.State = ExtensionModuleState.Failed;
-                        result.StateDetail = $"Shutdown() threw: {exception.Message}";
+                        result.StateDetail = $"FAILED to shut down: {exception.Message}";
                     }
-                    discovered.Warnings.Add($"Failed to shut down extension module '{module.ExtensionId}': {exception.Message}");
+                    discovered.Warnings.Add($"Extension '{module.ExtensionId}' FAILED to shut down (this is a bug, please report it): {exception.Message}");
                 }
             }
         }
