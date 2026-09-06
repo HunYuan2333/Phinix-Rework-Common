@@ -230,6 +230,15 @@ namespace Phinix.TradeExtension.Client
     }
 
 #if NET472
+    public interface IFrameworkTradeUpdateResultApi
+    {
+        void BeginTradeUpdate(string tradeId, string token);
+
+        bool IsTradeUpdatePending(string tradeId, string token);
+
+        bool CompleteTradeUpdate(string tradeId, string token, PhinixClient.Trade.TradeFailureReason failureReason, string failureMessage);
+    }
+
     public interface IFrameworkTradeClientApi
     {
         event EventHandler RepositoryChanged;
