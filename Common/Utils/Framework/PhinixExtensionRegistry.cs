@@ -62,7 +62,24 @@ namespace Utils.Framework
                 hostContext.TryGetService<IExtensionActivationPolicy>(out activationPolicy);
             }
 
-            foreach (Type moduleType in moduleTypes)
+            foreach (Type invalidType in moduleTypes)
+            {
+                PhinixExtensionAttribute invalidAttribute = invalidType.GetCustomAttribute<PhinixExtensionAttribute>();
+                string invalidId = invalidAttribute?.ExtensionId ?? invalidType.Name;
+                if (!dependencyGraph.TryGetValidationError(invalidId, out string validationError))
+                {
+                    continue;
+                }
+
+                ExtensionDiscoveryResult invalidResult = ExtensionDiscoveryResult.FromModuleType(invalidType, hostContext);
+                invalidResult.ExtensionId = invalidId;
+                invalidResult.DependsOn = new List<string>(invalidAttribute?.DependsOn ?? Array.Empty<string>());
+                invalidResult.State = ExtensionModuleState.Failed;
+                invalidResult.StateDetail = validationError;
+                discovered.ExtensionResults.Add(invalidResult);
+            }
+
+            foreach (Type moduleType in dependencyGraph.GetStableTopologicalOrder(moduleTypes))
             {
                 ExtensionDiscoveryResult result = ExtensionDiscoveryResult.FromModuleType(moduleType, hostContext);
 
@@ -99,6 +116,22 @@ namespace Utils.Framework
                     continue;
                 }
 
+                ExtensionDiscoveryResult failedDependency = result.DependsOn
+                    .Select(dependencyId => discovered.ExtensionResults.Find(candidate =>
+                        string.Equals(candidate.ExtensionId, dependencyId, StringComparison.OrdinalIgnoreCase)))
+                    .FirstOrDefault(dependency => dependency == null ||
+                        (dependency.State != ExtensionModuleState.Registered && dependency.State != ExtensionModuleState.Active));
+                if (failedDependency != null)
+                {
+                    bool disabled = failedDependency.State == ExtensionModuleState.Disabled ||
+                        failedDependency.State == ExtensionModuleState.DependencyDisabled;
+                    result.State = disabled ? ExtensionModuleState.DependencyDisabled : ExtensionModuleState.Failed;
+                    result.StateDetail = $"Dependency '{failedDependency.ExtensionId}' did not register successfully ({failedDependency.State}).";
+                    discovered.ExtensionResults.Add(result);
+                    discovered.Warnings.Add($"Extension '{extensionId}' was skipped: {result.StateDetail}");
+                    continue;
+                }
+
                 IPhinixExtensionModule module;
                 try
                 {
@@ -123,25 +156,44 @@ namespace Utils.Framework
 
                 result.ExtensionId = module.ExtensionId;
 
+                if (!string.Equals(module.ExtensionId, extensionId, StringComparison.OrdinalIgnoreCase))
+                {
+                    result.State = ExtensionModuleState.Failed;
+                    result.StateDetail = $"Module ExtensionId '{module.ExtensionId}' does not match declared ID '{extensionId}'.";
+                    discovered.ExtensionResults.Add(result);
+                    discovered.Warnings.Add(result.StateDetail);
+                    continue;
+                }
+
                 ExtensionBuilder builder = new ExtensionBuilder(module.ExtensionId, hostContext, discovered, apiRegistry, result);
                 if (!seenExtensionIds.Add(module.ExtensionId))
                 {
                     discovered.Warnings.Add($"Duplicate extension ID '{module.ExtensionId}' discovered in '{moduleType.FullName}'.");
                 }
 
-                discovered.Extensions.Add(module);
-                discovered.Modules.Add(module);
-
                 try
                 {
-                    module.Register(builder);
+                    Action<string, LogLevel> previousLog = hostContext.Log;
+                    hostContext.Log = createScopedLog(hostContext, module.ExtensionId, previousLog);
+                    try
+                    {
+                        module.Register(builder);
+                    }
+                    finally
+                    {
+                        hostContext.Log = previousLog;
+                    }
                     result.State = ExtensionModuleState.Registered;
+                    discovered.Extensions.Add(module);
+                    discovered.Modules.Add(module);
+                    discovered.RegistrationRollbacks[module.ExtensionId] = builder.Rollback;
                     discovered.Diagnostics.Add(
                         $"Framework module '{module.ExtensionId}' registered from '{moduleType.FullName}' " +
                         $"for host '{hostContext.HostKind ?? "unknown"}'.");
                 }
                 catch (Exception exception)
                 {
+                    builder.Rollback();
                     result.State = ExtensionModuleState.Failed;
                     result.StateDetail = $"FAILED to register: {exception.Message}";
                     discovered.Warnings.Add($"Extension '{module.ExtensionId}' FAILED to register (this is a bug, please report it): {exception.Message}");
@@ -334,14 +386,42 @@ namespace Utils.Framework
                 ExtensionDiscoveryResult result = discovered.ExtensionResults
                     .Find(r => string.Equals(r.ExtensionId, module.ExtensionId, StringComparison.OrdinalIgnoreCase));
 
+                if (result == null || result.State != ExtensionModuleState.Registered)
+                {
+                    continue;
+                }
+
+                ExtensionDiscoveryResult failedDependency = result.DependsOn
+                    .Select(dependencyId => discovered.ExtensionResults.Find(candidate =>
+                        string.Equals(candidate.ExtensionId, dependencyId, StringComparison.OrdinalIgnoreCase)))
+                    .FirstOrDefault(dependency => dependency == null || dependency.State != ExtensionModuleState.Active);
+                if (failedDependency != null)
+                {
+                    result.State = ExtensionModuleState.Failed;
+                    result.StateDetail = $"Dependency '{failedDependency?.ExtensionId ?? "unknown"}' did not activate successfully.";
+                    rollbackRegistration(discovered, hostContext, module.ExtensionId);
+                    discovered.Warnings.Add($"Extension '{module.ExtensionId}' was not activated: {result.StateDetail}");
+                    continue;
+                }
+
                 try
                 {
-                    module.Activate(hostContext);
+                    Action<string, LogLevel> previousLog = hostContext.Log;
+                    hostContext.Log = createScopedLog(hostContext, module.ExtensionId, previousLog);
+                    try
+                    {
+                        module.Activate(hostContext);
+                    }
+                    finally
+                    {
+                        hostContext.Log = previousLog;
+                    }
                     if (result != null) result.State = ExtensionModuleState.Active;
                     discovered.Diagnostics.Add($"Framework module '{module.ExtensionId}' activated for host '{hostContext.HostKind ?? "unknown"}'.");
                 }
                 catch (Exception exception)
                 {
+                    rollbackRegistration(discovered, hostContext, module.ExtensionId);
                     if (result != null)
                     {
                         result.State = ExtensionModuleState.Failed;
@@ -356,14 +436,28 @@ namespace Utils.Framework
         {
             hostContext = hostContext ?? ExtensionHostContext.Empty;
 
-            foreach (IActivatablePhinixExtensionModule module in discovered?.Modules?.OfType<IActivatablePhinixExtensionModule>() ?? Enumerable.Empty<IActivatablePhinixExtensionModule>())
+            foreach (IActivatablePhinixExtensionModule module in (discovered?.Modules?.OfType<IActivatablePhinixExtensionModule>() ?? Enumerable.Empty<IActivatablePhinixExtensionModule>()).Reverse())
             {
                 ExtensionDiscoveryResult result = discovered.ExtensionResults
                     .Find(r => string.Equals(r.ExtensionId, module.ExtensionId, StringComparison.OrdinalIgnoreCase));
 
+                if (result == null || result.State != ExtensionModuleState.Active)
+                {
+                    continue;
+                }
+
                 try
                 {
-                    module.Shutdown(hostContext);
+                    Action<string, LogLevel> previousLog = hostContext.Log;
+                    hostContext.Log = createScopedLog(hostContext, module.ExtensionId, previousLog);
+                    try
+                    {
+                        module.Shutdown(hostContext);
+                    }
+                    finally
+                    {
+                        hostContext.Log = previousLog;
+                    }
                     if (result != null) result.State = ExtensionModuleState.Shutdown;
                     discovered.Diagnostics.Add($"Framework module '{module.ExtensionId}' shut down for host '{hostContext.HostKind ?? "unknown"}'.");
                 }
@@ -376,7 +470,38 @@ namespace Utils.Framework
                     }
                     discovered.Warnings.Add($"Extension '{module.ExtensionId}' FAILED to shut down (this is a bug, please report it): {exception.Message}");
                 }
+                finally
+                {
+                    rollbackRegistration(discovered, hostContext, module.ExtensionId);
+                }
             }
+        }
+
+        private static void rollbackRegistration(DiscoveredPhinixExtensions discovered, ExtensionHostContext hostContext, string extensionId)
+        {
+            if (discovered != null && discovered.RegistrationRollbacks.TryGetValue(extensionId, out Action rollback))
+            {
+                rollback();
+                discovered.RegistrationRollbacks.Remove(extensionId);
+            }
+            (discovered?.ApiRegistry as ExtensionApiRegistry)?.UnregisterOwner(extensionId);
+            hostContext?.UnregisterPersistents(extensionId);
+        }
+
+        private static Action<string, LogLevel> createScopedLog(ExtensionHostContext hostContext, string extensionId, Action<string, LogLevel> fallback)
+        {
+            return (message, level) =>
+            {
+                HostLogEntry entry = new HostLogEntry(extensionId, level, message);
+                if (hostContext.StructuredLog != null)
+                {
+                    hostContext.StructuredLog(entry);
+                }
+                else
+                {
+                    fallback?.Invoke(entry.ToDisplayMessage(), level);
+                }
+            };
         }
 
         public static string[] CollectCapabilities(DiscoveredPhinixExtensions discovered)
@@ -482,6 +607,8 @@ namespace Utils.Framework
             private readonly DiscoveredPhinixExtensions discovered;
             private readonly ExtensionApiRegistry apiRegistry;
             private readonly ExtensionDiscoveryResult result;
+            private readonly List<Action> rollbackActions = new List<Action>();
+            private bool rolledBack;
 
             public ExtensionBuilder(string extensionId, ExtensionHostContext hostContext, DiscoveredPhinixExtensions discovered, ExtensionApiRegistry apiRegistry, ExtensionDiscoveryResult result = null)
             {
@@ -617,7 +744,19 @@ namespace Utils.Framework
                 return apiRegistry.ResolveAll<T>();
             }
 
-            private static void addIfMissing<T>(ICollection<T> collection, T item)
+            public void Rollback()
+            {
+                if (rolledBack) return;
+                rolledBack = true;
+                for (int index = rollbackActions.Count - 1; index >= 0; index--)
+                {
+                    rollbackActions[index]();
+                }
+                apiRegistry.UnregisterOwner(extensionId);
+                hostContext.UnregisterPersistents(extensionId);
+            }
+
+            private void addIfMissing<T>(ICollection<T> collection, T item)
             {
                 if (item == null || collection.Contains(item))
                 {
@@ -625,6 +764,7 @@ namespace Utils.Framework
                 }
 
                 collection.Add(item);
+                rollbackActions.Add(() => collection.Remove(item));
             }
         }
 

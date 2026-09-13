@@ -6,216 +6,209 @@ using System.Reflection;
 namespace Utils.Framework
 {
     /// <summary>
-    /// 扩展依赖关系图。在 DiscoverExtensions 实例化模块之前通过纯反射构建。
-    /// 用于查询：禁用某扩展时，哪些扩展会受到影响。
-    /// 设计哲学 §1.2：依赖图通过 ExtensionId 字符串匹配，不通过类型引用。
-    /// 设计哲学 §3.5：构建失败仅记录 warning，不中断发现流程。
+    /// Immutable extension dependency graph. It validates unique IDs, missing dependencies and
+    /// cycles before modules are instantiated, and supplies a stable dependency-first order.
     /// </summary>
     public sealed class ExtensionDependencyGraph
     {
-        // extensionId -> 它声明的依赖列表
-        private readonly Dictionary<string, List<string>> _dependencies;
-        // extensionId -> 依赖它的扩展列表（反向索引）
-        private readonly Dictionary<string, List<string>> _dependents;
-        // 未声明 DependsOn 的扩展 ID
-        private readonly HashSet<string> _undeclared;
-        // 构建过程中收集的警告（循环依赖等），不阻断
-        private readonly List<string> _warnings;
+        private readonly Dictionary<string, List<string>> dependencies;
+        private readonly Dictionary<string, List<string>> dependents;
+        private readonly HashSet<string> undeclared;
+        private readonly List<string> warnings;
+        private readonly Dictionary<string, string> validationErrors;
+        private readonly Dictionary<Type, int> sourceOrder;
 
-        private ExtensionDependencyGraph(
-            Dictionary<string, List<string>> dependencies,
-            Dictionary<string, List<string>> dependents,
-            HashSet<string> undeclared,
-            List<string> warnings)
+        private ExtensionDependencyGraph(Dictionary<string, List<string>> dependencies,
+            Dictionary<string, List<string>> dependents, HashSet<string> undeclared,
+            List<string> warnings, Dictionary<string, string> validationErrors,
+            Dictionary<Type, int> sourceOrder)
         {
-            _dependencies = dependencies;
-            _dependents = dependents;
-            _undeclared = undeclared;
-            _warnings = warnings;
+            this.dependencies = dependencies;
+            this.dependents = dependents;
+            this.undeclared = undeclared;
+            this.warnings = warnings;
+            this.validationErrors = validationErrors;
+            this.sourceOrder = sourceOrder;
         }
 
-        /// <summary>
-        /// 从候选模块类型列表构建依赖图。纯反射，不实例化任何模块。
-        /// 设计哲学 §3.5：单个类型读取异常仅记录 warning，不中断构建。
-        /// </summary>
         public static ExtensionDependencyGraph Build(IEnumerable<Type> moduleTypes)
         {
             Dictionary<string, List<string>> dependencies = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
             Dictionary<string, List<string>> dependents = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
             HashSet<string> undeclared = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             List<string> warnings = new List<string>();
+            Dictionary<string, string> errors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<Type, int> order = new Dictionary<Type, int>();
+            Dictionary<string, List<Type>> typesById = new Dictionary<string, List<Type>>(StringComparer.OrdinalIgnoreCase);
+            List<Type> types = (moduleTypes ?? Enumerable.Empty<Type>()).Where(type => type != null)
+                .OrderBy(type => type.FullName, StringComparer.Ordinal).ToList();
 
-            if (moduleTypes == null)
+            for (int index = 0; index < types.Count; index++)
             {
-                return new ExtensionDependencyGraph(dependencies, dependents, undeclared, warnings);
-            }
-
-            foreach (Type moduleType in moduleTypes)
-            {
-                string extensionId;
+                Type moduleType = types[index];
+                order[moduleType] = index;
                 try
                 {
-                    PhinixExtensionAttribute attr = moduleType.GetCustomAttribute<PhinixExtensionAttribute>();
-                    extensionId = attr?.ExtensionId ?? moduleType.Name;
-                }
-                catch (Exception ex)
-                {
-                    // §3.5 错误隔离：单个类型元数据读取失败不中断构建，但必须可观测
-                    warnings.Add($"Failed to read extension ID from '{moduleType.FullName}': {ex.GetType().Name}: {ex.Message}");
-                    continue;
-                }
-
-                string[] declaredDeps;
-                try
-                {
-                    PhinixExtensionAttribute attr = moduleType.GetCustomAttribute<PhinixExtensionAttribute>();
-                    declaredDeps = attr?.DependsOn ?? Array.Empty<string>();
-                }
-                catch (Exception ex)
-                {
-                    warnings.Add($"Failed to read DependsOn from '{moduleType.FullName}': {ex.GetType().Name}: {ex.Message}");
-                    declaredDeps = Array.Empty<string>();
-                }
-
-                if (declaredDeps == null || declaredDeps.Length == 0)
-                {
-                    undeclared.Add(extensionId);
-                    dependencies[extensionId] = new List<string>();
-                }
-                else
-                {
-                    List<string> deps = new List<string>(declaredDeps);
-                    dependencies[extensionId] = deps;
-                    foreach (string depId in deps)
+                    PhinixExtensionAttribute attribute = moduleType.GetCustomAttribute<PhinixExtensionAttribute>();
+                    string extensionId = attribute?.ExtensionId ?? moduleType.Name;
+                    if (!typesById.TryGetValue(extensionId, out List<Type> matchingTypes))
                     {
-                        if (!dependents.TryGetValue(depId, out List<string> dependentsList))
-                        {
-                            dependentsList = new List<string>();
-                            dependents[depId] = dependentsList;
-                        }
-                        dependentsList.Add(extensionId);
+                        matchingTypes = new List<Type>();
+                        typesById[extensionId] = matchingTypes;
                     }
+                    matchingTypes.Add(moduleType);
+                    List<string> declared = (attribute?.DependsOn ?? Array.Empty<string>())
+                        .Where(id => !string.IsNullOrWhiteSpace(id))
+                        .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                    dependencies[extensionId] = declared;
+                    if (declared.Count == 0) undeclared.Add(extensionId);
+                }
+                catch (Exception exception)
+                {
+                    string fallbackId = moduleType.Name;
+                    errors[fallbackId] = "Failed to read extension dependency metadata: " + exception.Message;
+                    warnings.Add($"Failed to read extension metadata from '{moduleType.FullName}': {exception.GetType().Name}: {exception.Message}");
                 }
             }
 
-            // 轻量循环依赖检测——仅记录 warning，不阻断（设计哲学 §1.3 非目标）
-            detectCycles(dependencies, warnings);
+            foreach (KeyValuePair<string, List<Type>> entry in typesById)
+            {
+                if (entry.Value.Count <= 1) continue;
+                string message = $"Duplicate extension ID '{entry.Key}' is declared by {entry.Value.Count} modules.";
+                errors[entry.Key] = message;
+                warnings.Add(message);
+            }
 
-            return new ExtensionDependencyGraph(dependencies, dependents, undeclared, warnings);
+            foreach (KeyValuePair<string, List<string>> entry in dependencies)
+            {
+                foreach (string dependencyId in entry.Value)
+                {
+                    if (!dependents.TryGetValue(dependencyId, out List<string> dependentIds))
+                    {
+                        dependentIds = new List<string>();
+                        dependents[dependencyId] = dependentIds;
+                    }
+                    dependentIds.Add(entry.Key);
+                    if (dependencies.ContainsKey(dependencyId)) continue;
+                    string message = $"Extension '{entry.Key}' requires missing extension '{dependencyId}'.";
+                    errors[entry.Key] = message;
+                    warnings.Add(message);
+                }
+            }
+
+            detectCycles(dependencies, errors, warnings);
+            propagateInvalidDependencies(dependencies, errors, warnings);
+            return new ExtensionDependencyGraph(dependencies, dependents, undeclared, warnings, errors, order);
         }
 
-        private static void detectCycles(Dictionary<string, List<string>> dependencies, List<string> warnings)
+        private static void detectCycles(Dictionary<string, List<string>> dependencies,
+            Dictionary<string, string> errors, List<string> warnings)
         {
             HashSet<string> visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            HashSet<string> inStack = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (string nodeId in dependencies.Keys)
-            {
-                if (!visited.Contains(nodeId))
-                {
-                    detectCyclesDfs(nodeId, dependencies, visited, inStack, new List<string>(), warnings);
-                }
-            }
+            HashSet<string> stack = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            List<string> path = new List<string>();
+            foreach (string extensionId in dependencies.Keys.OrderBy(id => id, StringComparer.OrdinalIgnoreCase))
+                detectCyclesDfs(extensionId, dependencies, visited, stack, path, errors, warnings);
         }
 
-        private static void detectCyclesDfs(string nodeId, Dictionary<string, List<string>> dependencies,
-            HashSet<string> visited, HashSet<string> inStack, List<string> path, List<string> warnings)
+        private static void detectCyclesDfs(string extensionId, Dictionary<string, List<string>> dependencies,
+            HashSet<string> visited, HashSet<string> stack, List<string> path,
+            Dictionary<string, string> errors, List<string> warnings)
         {
-            visited.Add(nodeId);
-            inStack.Add(nodeId);
-            path.Add(nodeId);
-
-            if (dependencies.TryGetValue(nodeId, out List<string> deps))
+            if (visited.Contains(extensionId)) return;
+            visited.Add(extensionId);
+            stack.Add(extensionId);
+            path.Add(extensionId);
+            foreach (string dependencyId in dependencies[extensionId])
             {
-                foreach (string depId in deps)
+                if (!dependencies.ContainsKey(dependencyId)) continue;
+                if (stack.Contains(dependencyId))
                 {
-                    if (inStack.Contains(depId))
-                    {
-                        warnings.Add($"Circular dependency detected involving '{depId}' (chain: {string.Join(" -> ", path)} -> {depId}).");
-                    }
-                    else if (!visited.Contains(depId) && dependencies.ContainsKey(depId))
-                    {
-                        detectCyclesDfs(depId, dependencies, visited, inStack, path, warnings);
-                    }
+                    int start = path.FindIndex(id => string.Equals(id, dependencyId, StringComparison.OrdinalIgnoreCase));
+                    List<string> cycle = path.Skip(start).ToList();
+                    string message = "Circular dependency detected: " + string.Join(" -> ", cycle) + " -> " + dependencyId + ".";
+                    foreach (string cycleId in cycle) errors[cycleId] = message;
+                    if (!warnings.Contains(message)) warnings.Add(message);
                 }
+                else detectCyclesDfs(dependencyId, dependencies, visited, stack, path, errors, warnings);
             }
-
-            inStack.Remove(nodeId);
             path.RemoveAt(path.Count - 1);
+            stack.Remove(extensionId);
         }
 
-        /// <summary>
-        /// 获取指定扩展依赖的所有扩展 ID（正向查询）。
-        /// </summary>
-        public IReadOnlyList<string> GetDependencies(string extensionId)
+        private static void propagateInvalidDependencies(Dictionary<string, List<string>> dependencies,
+            Dictionary<string, string> errors, List<string> warnings)
         {
-            if (extensionId != null && _dependencies.TryGetValue(extensionId, out List<string> deps))
+            bool changed;
+            do
             {
-                return deps;
-            }
-            return Array.Empty<string>();
-        }
-
-        /// <summary>
-        /// 获取依赖指定扩展的所有扩展 ID（反向查询——谁依赖我）。
-        /// </summary>
-        public IReadOnlyList<string> GetDependents(string extensionId)
-        {
-            if (extensionId != null && _dependents.TryGetValue(extensionId, out List<string> dependentsList))
-            {
-                return dependentsList;
-            }
-            return Array.Empty<string>();
-        }
-
-        /// <summary>
-        /// 给定一组被禁用的扩展 ID，返回指定扩展的依赖项中有多少被禁用。
-        /// 用于 StaticActivationPolicy.ShouldActivate 判断。
-        /// </summary>
-        public IReadOnlyList<string> GetDisabledDependencies(
-            string extensionId, IReadOnlyCollection<string> disabledSet)
-        {
-            if (extensionId == null || disabledSet == null || !_dependencies.TryGetValue(extensionId, out List<string> deps))
-            {
-                return Array.Empty<string>();
-            }
-
-            List<string> result = new List<string>();
-            foreach (string depId in deps)
-            {
-                foreach (string disabledId in disabledSet)
+                changed = false;
+                foreach (KeyValuePair<string, List<string>> entry in dependencies)
                 {
-                    if (string.Equals(disabledId, depId, StringComparison.OrdinalIgnoreCase))
-                    {
-                        result.Add(depId);
-                        break;
-                    }
+                    if (errors.ContainsKey(entry.Key)) continue;
+                    string invalidDependency = entry.Value.FirstOrDefault(errors.ContainsKey);
+                    if (invalidDependency == null) continue;
+                    string message = $"Extension '{entry.Key}' cannot load because dependency '{invalidDependency}' is invalid.";
+                    errors[entry.Key] = message;
+                    warnings.Add(message);
+                    changed = true;
                 }
+            }
+            while (changed);
+        }
+
+        public IReadOnlyList<Type> GetStableTopologicalOrder(IEnumerable<Type> moduleTypes)
+        {
+            List<Type> types = (moduleTypes ?? Enumerable.Empty<Type>()).Where(type => type != null)
+                .Where(type => !TryGetValidationError(getExtensionId(type), out _))
+                .OrderBy(type => sourceOrder.TryGetValue(type, out int index) ? index : int.MaxValue).ToList();
+            Dictionary<string, Type> typeById = types.ToDictionary(getExtensionId, StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, int> indegree = types.ToDictionary(getExtensionId, type => 0, StringComparer.OrdinalIgnoreCase);
+            foreach (Type type in types)
+            {
+                string extensionId = getExtensionId(type);
+                indegree[extensionId] = dependencies[extensionId].Count(typeById.ContainsKey);
+            }
+
+            List<Type> result = new List<Type>();
+            while (result.Count < types.Count)
+            {
+                Type next = types.FirstOrDefault(type => !result.Contains(type) && indegree[getExtensionId(type)] == 0);
+                if (next == null) break;
+                result.Add(next);
+                if (!dependents.TryGetValue(getExtensionId(next), out List<string> dependentIds)) continue;
+                foreach (string dependentId in dependentIds)
+                    if (indegree.ContainsKey(dependentId)) indegree[dependentId]--;
             }
             return result;
         }
 
-        /// <summary>
-        /// 该扩展是否未声明 DependsOn（老插件兼容提示用）。
-        /// </summary>
-        public bool IsUndeclared(string extensionId)
+        private static string getExtensionId(Type type)
         {
-            return extensionId != null && _undeclared.Contains(extensionId);
+            PhinixExtensionAttribute attribute = type.GetCustomAttribute<PhinixExtensionAttribute>();
+            return attribute?.ExtensionId ?? type.Name;
         }
 
-        /// <summary>
-        /// 所有未声明依赖关系的扩展 ID（用于 UI 批量提示）。
-        /// </summary>
-        public IReadOnlyCollection<string> UndeclaredExtensions => _undeclared;
+        public bool TryGetValidationError(string extensionId, out string error)
+        {
+            if (extensionId != null) return validationErrors.TryGetValue(extensionId, out error);
+            error = null;
+            return false;
+        }
 
-        /// <summary>
-        /// 构建过程中收集的警告（循环依赖等）。不阻断发现流程。
-        /// </summary>
-        public IReadOnlyList<string> BuildWarnings => _warnings;
-
-        /// <summary>
-        /// 图中所有已知的扩展 ID。
-        /// </summary>
-        public IReadOnlyCollection<string> KnownExtensionIds => _dependencies.Keys;
+        public IReadOnlyList<string> GetDependencies(string extensionId) =>
+            extensionId != null && dependencies.TryGetValue(extensionId, out List<string> values) ? values : (IReadOnlyList<string>)Array.Empty<string>();
+        public IReadOnlyList<string> GetDependents(string extensionId) =>
+            extensionId != null && dependents.TryGetValue(extensionId, out List<string> values) ? values : (IReadOnlyList<string>)Array.Empty<string>();
+        public IReadOnlyList<string> GetDisabledDependencies(string extensionId, IReadOnlyCollection<string> disabledSet)
+        {
+            if (extensionId == null || disabledSet == null || !dependencies.TryGetValue(extensionId, out List<string> values)) return Array.Empty<string>();
+            return values.Where(dependencyId => disabledSet.Any(disabledId =>
+                string.Equals(disabledId, dependencyId, StringComparison.OrdinalIgnoreCase))).ToList();
+        }
+        public bool IsUndeclared(string extensionId) => extensionId != null && undeclared.Contains(extensionId);
+        public IReadOnlyCollection<string> UndeclaredExtensions => undeclared;
+        public IReadOnlyList<string> BuildWarnings => warnings;
+        public IReadOnlyCollection<string> KnownExtensionIds => dependencies.Keys;
     }
 }

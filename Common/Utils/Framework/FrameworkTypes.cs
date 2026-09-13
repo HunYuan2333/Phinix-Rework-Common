@@ -86,6 +86,12 @@ namespace Utils.Framework
         IReadOnlyList<T> ResolveAll<T>() where T : class;
     }
 
+    [AttributeUsage(AttributeTargets.Interface | AttributeTargets.Class, Inherited = false)]
+    public sealed class ExtensionApiContractAttribute : Attribute
+    {
+        public bool AllowMultipleProviders { get; set; } = true;
+    }
+
     public interface IFrameworkServerPacketDispatcher
     {
         void Send(string connectionId, FrameworkPacket packet);
@@ -237,6 +243,40 @@ namespace Utils.Framework
             return registerApi(typeof(T), extensionId, implementation);
         }
 
+        /// <summary>
+        /// Removes every API published by one extension. Hosts use this when registration or
+        /// activation fails; the existing public registration and resolution signatures remain intact.
+        /// </summary>
+        public int UnregisterOwner(string extensionId)
+        {
+            if (string.IsNullOrWhiteSpace(extensionId))
+            {
+                return 0;
+            }
+
+            int removed = 0;
+            lock (syncRoot)
+            {
+                List<Type> emptyTypes = new List<Type>();
+                foreach (KeyValuePair<Type, List<ApiRegistration>> entry in registrations)
+                {
+                    removed += entry.Value.RemoveAll(candidate =>
+                        string.Equals(candidate.ExtensionId, extensionId, StringComparison.OrdinalIgnoreCase));
+                    if (entry.Value.Count == 0)
+                    {
+                        emptyTypes.Add(entry.Key);
+                    }
+                }
+
+                foreach (Type emptyType in emptyTypes)
+                {
+                    registrations.Remove(emptyType);
+                }
+            }
+
+            return removed;
+        }
+
         private ExtensionApiRegistrationResult registerApi(Type apiType, string extensionId, object implementation)
         {
             if (apiType == null)
@@ -263,6 +303,13 @@ namespace Utils.Framework
                 {
                     return ExtensionApiRegistrationResult.CreateFailure(
                         $"Framework API '{apiType.FullName}' from extension '{extensionId}' was already registered.");
+                }
+
+                ExtensionApiContractAttribute contract = apiType.GetCustomAttribute<ExtensionApiContractAttribute>();
+                if (providers.Count > 0 && contract != null && !contract.AllowMultipleProviders)
+                {
+                    return ExtensionApiRegistrationResult.CreateFailure(
+                        $"Framework API '{apiType.FullName}' accepts one provider; extension '{extensionId}' was rejected because '{providers[0].ExtensionId}' is already registered.");
                 }
 
                 providers.Add(new ApiRegistration(extensionId, implementation));
@@ -329,18 +376,19 @@ namespace Utils.Framework
 
         public FileSystemExtensionStorageProvider(string rootPath)
         {
-            this.rootPath = string.IsNullOrWhiteSpace(rootPath)
+            string configuredRoot = string.IsNullOrWhiteSpace(rootPath)
                 ? Path.Combine(AppDomain.CurrentDomain.BaseDirectory ?? ".", "framework-extensions")
                 : rootPath;
+            this.rootPath = Path.GetFullPath(configuredRoot);
         }
 
         public string GetStoragePath(string extensionId, string logicalName)
         {
             string safeExtensionId = sanitizePathPart(extensionId, "unknown-extension");
             string safeLogicalName = sanitizePathPart(logicalName, "default");
-            string extensionDirectory = Path.Combine(rootPath, safeExtensionId);
+            string extensionDirectory = ensureWithinRoot(Path.Combine(rootPath, safeExtensionId));
             Directory.CreateDirectory(extensionDirectory);
-            return Path.Combine(extensionDirectory, safeLogicalName);
+            return ensureWithinRoot(Path.Combine(extensionDirectory, safeLogicalName));
         }
 
         private static string sanitizePathPart(string value, string fallback)
@@ -351,7 +399,77 @@ namespace Utils.Framework
                 candidate = candidate.Replace(invalidChar, '_');
             }
 
+            if (candidate == "." || candidate == "..")
+            {
+                candidate = fallback;
+            }
+
             return string.IsNullOrWhiteSpace(candidate) ? fallback : candidate;
+        }
+
+        private string ensureWithinRoot(string candidatePath)
+        {
+            string fullPath = Path.GetFullPath(candidatePath);
+            string rootPrefix = rootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                + Path.DirectorySeparatorChar;
+            if (!fullPath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Extension storage path escaped the configured storage root.");
+            }
+
+            return fullPath;
+        }
+    }
+
+    public sealed class HostLogEntry
+    {
+        public HostLogEntry(string extensionId, LogLevel level, string message, Exception exception = null, string correlationId = null)
+        {
+            ExtensionId = extensionId ?? string.Empty;
+            Level = level;
+            Message = message ?? string.Empty;
+            Exception = exception;
+            CorrelationId = correlationId;
+            TimestampUtc = DateTime.UtcNow;
+        }
+
+        public DateTime TimestampUtc { get; }
+        public string ExtensionId { get; }
+        public LogLevel Level { get; }
+        public string Message { get; }
+        public Exception Exception { get; }
+        public string CorrelationId { get; }
+
+        public string ToDisplayMessage()
+        {
+            string prefix = string.IsNullOrEmpty(ExtensionId) ? string.Empty : "[" + ExtensionId + "] ";
+            string correlation = string.IsNullOrEmpty(CorrelationId) ? string.Empty : " [correlation=" + CorrelationId + "]";
+            string exception = Exception == null ? string.Empty : Environment.NewLine + Exception;
+            return prefix + Message + correlation + exception;
+        }
+    }
+
+    public interface IExtensionLogger
+    {
+        string ExtensionId { get; }
+        void Log(string message, LogLevel level = LogLevel.INFO, Exception exception = null, string correlationId = null);
+    }
+
+    internal sealed class ExtensionLogger : IExtensionLogger
+    {
+        private readonly Action<HostLogEntry> sink;
+
+        public ExtensionLogger(string extensionId, Action<HostLogEntry> sink)
+        {
+            ExtensionId = extensionId ?? string.Empty;
+            this.sink = sink;
+        }
+
+        public string ExtensionId { get; }
+
+        public void Log(string message, LogLevel level = LogLevel.INFO, Exception exception = null, string correlationId = null)
+        {
+            sink?.Invoke(new HostLogEntry(ExtensionId, level, message, exception, correlationId));
         }
     }
 
@@ -366,6 +484,9 @@ namespace Utils.Framework
         public string HostKind { get; set; } = "unknown";
 
         public Action<string, LogLevel> Log { get; set; }
+
+        /// <summary>Optional structured log sink. The legacy <see cref="Log"/> callback remains supported.</summary>
+        public Action<HostLogEntry> StructuredLog { get; set; }
 
         public Func<string> CreateMessageId { get; set; } = () => Guid.NewGuid().ToString();
 
@@ -413,6 +534,21 @@ namespace Utils.Framework
             return StorageProvider?.GetStoragePath(extensionId, logicalName);
         }
 
+        public IExtensionLogger GetExtensionLogger(string extensionId)
+        {
+            return new ExtensionLogger(extensionId, entry =>
+            {
+                if (StructuredLog != null)
+                {
+                    StructuredLog(entry);
+                }
+                else
+                {
+                    Log?.Invoke(entry.ToDisplayMessage(), entry.Level);
+                }
+            });
+        }
+
         public void SetOption(string key, string value)
         {
             if (string.IsNullOrWhiteSpace(key))
@@ -457,6 +593,17 @@ namespace Utils.Framework
             }
 
             persistents.Add(new ExtensionPersistenceRegistration(extensionId, logicalName, persistent));
+        }
+
+        internal int UnregisterPersistents(string extensionId)
+        {
+            if (string.IsNullOrWhiteSpace(extensionId))
+            {
+                return 0;
+            }
+
+            return persistents.RemoveAll(candidate =>
+                string.Equals(candidate.ExtensionId, extensionId, StringComparison.OrdinalIgnoreCase));
         }
 
         public bool TryResolveApi<T>(out T implementation) where T : class
@@ -929,6 +1076,9 @@ namespace Utils.Framework
 
     public sealed class DiscoveredPhinixExtensions
     {
+        internal Dictionary<string, Action> RegistrationRollbacks { get; } =
+            new Dictionary<string, Action>(StringComparer.OrdinalIgnoreCase);
+
         public IExtensionApiRegistry ApiRegistry { get; internal set; } = new ExtensionApiRegistry();
 
         public List<IPhinixExtension> Extensions { get; } = new List<IPhinixExtension>();
