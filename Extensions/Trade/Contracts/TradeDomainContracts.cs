@@ -92,13 +92,23 @@ namespace PhinixClient.Trade
 
         public TradeItemSnapshot InnerItem { get; }
 
+        /// <summary>
+        /// Optional opaque state captured by a client-side item codec. Contracts and
+        /// server-side trade code must carry it without interpreting it.
+        /// </summary>
+        public string StateCodecId { get; }
+
+        public byte[] StatePayload { get; }
+
         public TradeItemSnapshot(
             string defName,
             int stackCount,
             int hitPoints,
             TradeItemQuality quality = TradeItemQuality.None,
             string stuffDefName = "",
-            TradeItemSnapshot innerItem = null)
+            TradeItemSnapshot innerItem = null,
+            string stateCodecId = "",
+            byte[] statePayload = null)
         {
             DefName = defName ?? string.Empty;
             StackCount = stackCount;
@@ -106,6 +116,135 @@ namespace PhinixClient.Trade
             Quality = quality;
             StuffDefName = stuffDefName ?? string.Empty;
             InnerItem = innerItem;
+            StateCodecId = stateCodecId ?? string.Empty;
+            StatePayload = statePayload?.ToArray() ?? Array.Empty<byte>();
+        }
+    }
+
+    /// <summary>
+    /// Wire-level conventions for stateful item codecs. The preview remains a
+    /// vanilla, server-agnostic description; only the owning codec interprets the
+    /// opaque state payload.
+    /// </summary>
+    public static class StatefulTradeItemProtocol
+    {
+        public const string ScribeCodecId = "core.item.scribe-v1";
+        public const string PreviewMetadataKey = "trade_item_preview_v1";
+        public const int MaxStatePayloadBytes = 4 * 1024 * 1024;
+        public const int MaxPreviewMetadataChars = 256 * 1024;
+
+        public static void SetPreview(FrameworkItemPayload payload, TradeItemSnapshot item)
+        {
+            if (payload == null) throw new ArgumentNullException(nameof(payload));
+            if (item == null) throw new ArgumentNullException(nameof(item));
+
+            byte[] previewBytes = FrameworkSerialization.SerializeItemData(ToPreview(item));
+            payload.SetMetadataValue(PreviewMetadataKey, Convert.ToBase64String(previewBytes));
+        }
+
+        public static bool TryGetPreview(FrameworkItemPayload payload, out TradeItemSnapshot item)
+        {
+            item = null;
+            if (payload == null ||
+                !payload.TryGetMetadataValue(PreviewMetadataKey, out string encodedPreview) ||
+                string.IsNullOrEmpty(encodedPreview) ||
+                encodedPreview.Length > MaxPreviewMetadataChars)
+            {
+                return false;
+            }
+
+            try
+            {
+                byte[] previewBytes = Convert.FromBase64String(encodedPreview);
+                global::Phinix.Framework.FrameworkVanillaItemData preview = FrameworkSerialization.DeserializeItemData(previewBytes);
+                if (preview == null || string.IsNullOrEmpty(preview.DefName))
+                {
+                    return false;
+                }
+
+                byte[] statePayload = payload.PayloadBytes?.ToArray() ?? Array.Empty<byte>();
+                if (statePayload.Length > MaxStatePayloadBytes ||
+                    (string.Equals(payload.CodecId, ScribeCodecId, StringComparison.OrdinalIgnoreCase) && statePayload.Length == 0))
+                {
+                    return false;
+                }
+
+                item = FromPreview(preview, payload.CodecId, statePayload);
+                return true;
+            }
+            catch (FormatException)
+            {
+                return false;
+            }
+            catch (Google.Protobuf.InvalidProtocolBufferException)
+            {
+                return false;
+            }
+        }
+
+        public static global::Phinix.Framework.FrameworkVanillaItemData ToPreview(TradeItemSnapshot item)
+        {
+            if (item == null) return null;
+
+            return new global::Phinix.Framework.FrameworkVanillaItemData
+            {
+                DefName = item.DefName,
+                StackCount = item.StackCount,
+                HitPoints = item.HitPoints,
+                Quality = ToFrameworkQuality(item.Quality),
+                StuffDefName = item.StuffDefName,
+                InnerItem = ToPreview(item.InnerItem)
+            };
+        }
+
+        public static TradeItemSnapshot FromPreview(
+            global::Phinix.Framework.FrameworkVanillaItemData preview,
+            string stateCodecId = "",
+            byte[] statePayload = null)
+        {
+            if (preview == null) return null;
+
+            return new TradeItemSnapshot(
+                preview.DefName,
+                preview.StackCount,
+                preview.HitPoints,
+                FromFrameworkQuality(preview.Quality),
+                preview.StuffDefName,
+                FromPreview(preview.InnerItem),
+                stateCodecId,
+                statePayload);
+        }
+
+        private static global::Phinix.Framework.FrameworkItemQuality ToFrameworkQuality(TradeItemQuality quality)
+        {
+            switch (quality)
+            {
+                case TradeItemQuality.Awful: return global::Phinix.Framework.FrameworkItemQuality.Awful;
+                case TradeItemQuality.Poor: return global::Phinix.Framework.FrameworkItemQuality.Poor;
+                case TradeItemQuality.Normal: return global::Phinix.Framework.FrameworkItemQuality.Normal;
+                case TradeItemQuality.Good: return global::Phinix.Framework.FrameworkItemQuality.Good;
+                case TradeItemQuality.Excellent: return global::Phinix.Framework.FrameworkItemQuality.Excellent;
+                case TradeItemQuality.Masterwork: return global::Phinix.Framework.FrameworkItemQuality.Masterwork;
+                case TradeItemQuality.Legendary: return global::Phinix.Framework.FrameworkItemQuality.Legendary;
+                case TradeItemQuality.None: return global::Phinix.Framework.FrameworkItemQuality.None;
+                default: return global::Phinix.Framework.FrameworkItemQuality.Unspecified;
+            }
+        }
+
+        private static TradeItemQuality FromFrameworkQuality(global::Phinix.Framework.FrameworkItemQuality quality)
+        {
+            switch (quality)
+            {
+                case global::Phinix.Framework.FrameworkItemQuality.Awful: return TradeItemQuality.Awful;
+                case global::Phinix.Framework.FrameworkItemQuality.Poor: return TradeItemQuality.Poor;
+                case global::Phinix.Framework.FrameworkItemQuality.Normal: return TradeItemQuality.Normal;
+                case global::Phinix.Framework.FrameworkItemQuality.Good: return TradeItemQuality.Good;
+                case global::Phinix.Framework.FrameworkItemQuality.Excellent: return TradeItemQuality.Excellent;
+                case global::Phinix.Framework.FrameworkItemQuality.Masterwork: return TradeItemQuality.Masterwork;
+                case global::Phinix.Framework.FrameworkItemQuality.Legendary: return TradeItemQuality.Legendary;
+                case global::Phinix.Framework.FrameworkItemQuality.None: return TradeItemQuality.None;
+                default: return TradeItemQuality.None;
+            }
         }
     }
 
