@@ -17,6 +17,8 @@ namespace Phinix.TradeExtension
         public const string StatusUpdateResponseType = "trade.status.update.response";
         public const string CompletedEventType = "trade.completed.event";
         public const string CancelledEventType = "trade.cancelled.event";
+        public const string CompletionAckRequestType = "trade.completion.ack.request";
+        public const string CompletionAckResponseType = "trade.completion.ack.response";
         public const string StateKindTradeSnapshot = "trade.snapshot";
     }
 
@@ -180,5 +182,28 @@ namespace Phinix.TradeExtension
 
         [DataMember(Order = 3)]
         public bool Cancelled { get; set; }
+    }
+
+    [DataContract]
+    public sealed class FrameworkTradeCompletionAckRequest
+    {
+        [DataMember(Order = 0)]
+        public string TradeId { get; set; }
+
+        [DataMember(Order = 1)]
+        public bool Cancelled { get; set; }
+    }
+
+    [DataContract]
+    public sealed class FrameworkTradeCompletionAckResponse
+    {
+        [DataMember(Order = 0)]
+        public string TradeId { get; set; }
+
+        [DataMember(Order = 1)]
+        public bool Accepted { get; set; }
+
+        [DataMember(Order = 2)]
+        public string FailureMessage { get; set; }
     }
 }

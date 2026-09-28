@@ -278,14 +278,32 @@ namespace PhinixClient.Trade
         public string OtherPartyUuid { get; }
         public ClientTradeSnapshot Trade { get; }
         public TradeItemSnapshot[] Items { get; }
+        public FrameworkItemPayload[] ItemPayloads { get; }
 
-        public TradeCompletionEventArgs(string tradeId, bool success, string otherPartyUuid, IEnumerable<TradeItemSnapshot> items, ClientTradeSnapshot trade = null)
+        public TradeCompletionEventArgs(string tradeId, bool success, string otherPartyUuid,
+            IEnumerable<TradeItemSnapshot> items, ClientTradeSnapshot trade = null,
+            IEnumerable<FrameworkItemPayload> itemPayloads = null)
         {
             TradeId = tradeId ?? string.Empty;
             Success = success;
             OtherPartyUuid = otherPartyUuid ?? string.Empty;
             Trade = trade;
             Items = (items ?? Array.Empty<TradeItemSnapshot>()).ToArray();
+            ItemPayloads = (itemPayloads ?? Array.Empty<FrameworkItemPayload>()).Select(ClonePayload).ToArray();
+        }
+
+        private static FrameworkItemPayload ClonePayload(FrameworkItemPayload payload)
+        {
+            if (payload == null) return null;
+            return new FrameworkItemPayload
+            {
+                CodecId = payload.CodecId,
+                PayloadJson = payload.PayloadJson,
+                PayloadBytes = payload.PayloadBytes?.ToArray() ?? Array.Empty<byte>(),
+                Metadata = (payload.Metadata ?? new List<FrameworkMetadataEntry>())
+                    .Select(entry => new FrameworkMetadataEntry { Key = entry?.Key, Value = entry?.Value })
+                    .ToList()
+            };
         }
     }
 
@@ -434,6 +452,12 @@ namespace Phinix.TradeExtension.Client
         /// FrameworkV2 模式不应调用此方法 —— 完成事件由 HandleCompletedEvent/HandleCancelledEvent 维护。
         /// </summary>
         void CompleteTrade(string tradeId, bool success, string otherPartyUuid, IEnumerable<PhinixClient.Trade.TradeItemSnapshot> items);
+    }
+
+    /// <summary>Legacy adapters inject only fully translated framework payloads through this boundary.</summary>
+    public interface IFrameworkLegacyTradeDeliveryApi
+    {
+        void CompleteTrade(string tradeId, bool success, string otherPartyUuid, IEnumerable<FrameworkItemPayload> items);
     }
 
     public interface ITradeUiHostContext

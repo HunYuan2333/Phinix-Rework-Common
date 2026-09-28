@@ -537,8 +537,42 @@ namespace Utils.Framework
                 .GetAssemblies()
                 .Where(isCandidateExtensionAssembly)
                 .SelectMany(getLoadableTypes)
-                .Where(type => type.IsClass && !type.IsAbstract && type.GetConstructor(Type.EmptyTypes) != null)
+                .Where(isConcreteExtensionType)
+                .Where(hasPublicParameterlessConstructor)
                 .ToList();
+        }
+
+        private static bool isConcreteExtensionType(Type type)
+        {
+            if (type == null) return false;
+
+            try
+            {
+                if (!type.IsClass || type.IsAbstract) return false;
+
+                return typeof(IPhinixExtensionModule).IsAssignableFrom(type) ||
+                       isLegacyDiscoverableType(type);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[Phinix] Skipped extension type '{type.FullName}' while checking its contracts: {ex.Message}");
+                return false;
+            }
+        }
+
+        private static bool hasPublicParameterlessConstructor(Type type)
+        {
+            try
+            {
+                return type.GetConstructor(Type.EmptyTypes) != null;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[Phinix] Skipped extension type '{type.FullName}' while checking its constructor: {ex.Message}");
+                return false;
+            }
         }
 
         private static IEnumerable<Type> getLoadableTypes(Assembly assembly)
@@ -550,6 +584,12 @@ namespace Utils.Framework
             catch (ReflectionTypeLoadException exception)
             {
                 return exception.Types.Where(type => type != null);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[Phinix] Failed to enumerate extension types from '{assembly.FullName}': {ex.Message}");
+                return Enumerable.Empty<Type>();
             }
         }
 
