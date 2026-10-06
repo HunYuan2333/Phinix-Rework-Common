@@ -14,7 +14,12 @@ namespace Utils.Framework
         /// </summary>
         public static List<Type> ScanCandidateModuleTypes()
         {
-            return scanCandidateTypes()
+            return ScanCandidateModuleTypes(null);
+        }
+
+        public static List<Type> ScanCandidateModuleTypes(IExtensionDiscoveryPolicy discoveryPolicy)
+        {
+            return scanCandidateTypes(discoveryPolicy)
                 .Where(type => typeof(IPhinixExtensionModule).IsAssignableFrom(type))
                 .OrderBy(type => type.FullName, StringComparer.Ordinal)
                 .ToList();
@@ -41,7 +46,8 @@ namespace Utils.Framework
             discovered.ApiRegistry = apiRegistry;
             HashSet<string> seenExtensionIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            List<Type> candidateTypes = scanCandidateTypes();
+            hostContext.TryGetService<IExtensionDiscoveryPolicy>(out var discoveryPolicy);
+            List<Type> candidateTypes = scanCandidateTypes(discoveryPolicy);
 
             List<Type> moduleTypes = candidateTypes
                 .Where(type => typeof(IPhinixExtensionModule).IsAssignableFrom(type))
@@ -377,6 +383,13 @@ namespace Utils.Framework
             return discovered;
         }
 
+        private static void stopHostResources(ExtensionHostContext context, IPhinixExtensionModule module)
+        {
+            IExtensionModuleLifecycleObserver observer;
+            try { if (context.TryGetService(out observer)) observer.OnStopped(module); }
+            catch (Exception error) { context.Log?.Invoke("Host resource cleanup failed: " + error.GetType().Name, LogLevel.WARNING); }
+        }
+
         public static void ActivateExtensions(DiscoveredPhinixExtensions discovered, ExtensionHostContext hostContext = null)
         {
             hostContext = hostContext ?? ExtensionHostContext.Empty;
@@ -410,6 +423,8 @@ namespace Utils.Framework
                     hostContext.Log = createScopedLog(hostContext, module.ExtensionId, previousLog);
                     try
                     {
+                        IExtensionModuleLifecycleObserver observer;
+                        if (hostContext.TryGetService(out observer)) observer.OnActivating((IPhinixExtensionModule)module);
                         module.Activate(hostContext);
                     }
                     finally
@@ -421,6 +436,7 @@ namespace Utils.Framework
                 }
                 catch (Exception exception)
                 {
+                    stopHostResources(hostContext, (IPhinixExtensionModule)module);
                     rollbackRegistration(discovered, hostContext, module.ExtensionId);
                     if (result != null)
                     {
@@ -452,7 +468,8 @@ namespace Utils.Framework
                     hostContext.Log = createScopedLog(hostContext, module.ExtensionId, previousLog);
                     try
                     {
-                        module.Shutdown(hostContext);
+                        try { module.Shutdown(hostContext); }
+                        finally { stopHostResources(hostContext, (IPhinixExtensionModule)module); }
                     }
                     finally
                     {
@@ -531,12 +548,13 @@ namespace Utils.Framework
             return capabilities.OrderBy(capability => capability).ToArray();
         }
 
-        private static List<Type> scanCandidateTypes()
+        private static List<Type> scanCandidateTypes(IExtensionDiscoveryPolicy discoveryPolicy = null)
         {
             return AppDomain.CurrentDomain
                 .GetAssemblies()
-                .Where(isCandidateExtensionAssembly)
+                .Where(assembly => (discoveryPolicy == null || discoveryPolicy.ShouldScanAssembly(assembly)) && isCandidateExtensionAssembly(assembly))
                 .SelectMany(getLoadableTypes)
+                .Where(type => discoveryPolicy == null || discoveryPolicy.ShouldDiscoverType(type))
                 .Where(isConcreteExtensionType)
                 .Where(hasPublicParameterlessConstructor)
                 .ToList();

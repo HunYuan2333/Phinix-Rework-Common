@@ -655,6 +655,13 @@ namespace Utils.Framework
         }
     }
 
+    /// <summary>A host may restrict owned assembly discovery without changing normal module lifecycle.</summary>
+    public interface IExtensionDiscoveryPolicy
+    {
+        bool ShouldScanAssembly(System.Reflection.Assembly assembly);
+        bool ShouldDiscoverType(Type type);
+    }
+
     /// <summary>
     /// 决定一个已发现的扩展是否应被激活。
     /// v1 使用 <see cref="StaticActivationPolicy"/>（从设置读取一次性快照）。
