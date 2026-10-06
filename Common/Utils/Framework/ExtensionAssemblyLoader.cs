@@ -12,6 +12,19 @@ namespace Utils.Framework
         private static readonly Dictionary<string, string> assemblyFileCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private static readonly object assemblyFileCacheLock = new object();
         private static bool resolveHandlerWired;
+        private static readonly Dictionary<Guid, Func<ResolveEventArgs, bool>> resolutionGuards = new Dictionary<Guid, Func<ResolveEventArgs, bool>>();
+        public static IDisposable RegisterResolutionGuard(Func<ResolveEventArgs, bool> guard)
+        {
+            if (guard == null) throw new ArgumentNullException(nameof(guard));
+            var id = Guid.NewGuid(); lock (assemblyFileCacheLock) resolutionGuards.Add(id, guard); return new GuardLease(id);
+        }
+        private sealed class GuardLease : IDisposable
+        {
+            private readonly Guid id;
+            internal GuardLease(Guid id) { this.id = id; }
+            public void Dispose() { lock (assemblyFileCacheLock) resolutionGuards.Remove(id); }
+        }
+
 
         private static void RebuildAssemblyFileCache()
         {
@@ -73,6 +86,9 @@ namespace Utils.Framework
                 RebuildAssemblyFileCache();
                 AppDomain.CurrentDomain.AssemblyResolve += (sender, args) =>
                 {
+                    Func<ResolveEventArgs, bool>[] guards;
+                    lock (assemblyFileCacheLock) guards = resolutionGuards.Values.ToArray();
+                    if (guards.Any(guard => !guard(args))) return null;
                     AssemblyName requestedName = new AssemblyName(args.Name);
 
                     // Fast path: check the cached file index first (O(1) dictionary lookup)
