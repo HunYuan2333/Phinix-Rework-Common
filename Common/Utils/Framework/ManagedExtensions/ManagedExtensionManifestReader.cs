@@ -17,7 +17,7 @@ namespace Utils.Framework.ManagedExtensions
             "Assembly-CSharp", "mscorlib", "netstandard", "System", "UnityEngine", "0Harmony", "LiteNetLib", "Google.Protobuf", "Protobuf",
             "Utils", "Connections", "Connections.Client", "Authentication", "Authentication.Client", "UserManagement", "UserManagement.Client",
             "ClientExtensionAbstractions", "PhinixClient",
-            "Phinix.ClientComposition", "Autofac", "Microsoft.Bcl.AsyncInterfaces"
+            "Phinix.ClientComposition", "Autofac", "Microsoft.Bcl.AsyncInterfaces", "Stateless"
         };
 
         public static ManagedExtensionManifest Read(byte[] bytes)

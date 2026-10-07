@@ -65,6 +65,19 @@ namespace Utils.Framework
             DisabledDependencies = disabledDependencies ?? Array.Empty<string>();
         }
 
+        // UI-only recovery entries. Never add these to discovery/activation results.
+        public static List<ExtensionDiscoveryResult> IncludeDisabledSettings(
+            IReadOnlyList<ExtensionDiscoveryResult> discovered, IReadOnlyCollection<string> disabledIds)
+        {
+            var results = discovered == null ? new List<ExtensionDiscoveryResult>() : new List<ExtensionDiscoveryResult>(discovered);
+            var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var result in results) if (result.ExtensionId != null) ids.Add(result.ExtensionId);
+            if (disabledIds != null) foreach (string id in disabledIds)
+                if (!string.IsNullOrWhiteSpace(id) && ids.Add(id))
+                    results.Add(new ExtensionDiscoveryResult { ExtensionId = id, DisplayName = id, State = ExtensionModuleState.Disabled });
+            return results;
+        }
+
         /// <summary>
         /// 计算指定扩展的展示状态。纯函数，无副作用，可在任意层调用。
         /// </summary>
