@@ -41,6 +41,22 @@ namespace Utils.Framework
         {
             hostContext = hostContext ?? ExtensionHostContext.Empty;
             DiscoveredPhinixExtensions discovered = new DiscoveredPhinixExtensions();
+            try
+            {
+                return discoverExtensions(hostContext, activationPolicy, discovered);
+            }
+            catch
+            {
+                ShutdownExtensions(discovered, hostContext);
+                throw;
+            }
+        }
+
+        private static DiscoveredPhinixExtensions discoverExtensions(
+            ExtensionHostContext hostContext,
+            IExtensionActivationPolicy activationPolicy,
+            DiscoveredPhinixExtensions discovered)
+        {
             ExtensionApiRegistry apiRegistry = hostContext.ApiRegistry as ExtensionApiRegistry ?? new ExtensionApiRegistry();
             hostContext.ApiRegistry = apiRegistry;
             discovered.ApiRegistry = apiRegistry;
@@ -199,6 +215,7 @@ namespace Utils.Framework
                 }
                 catch (Exception exception)
                 {
+                    cleanupModule(module, extensionId, discovered, hostContext);
                     builder.Rollback();
                     result.State = ExtensionModuleState.Failed;
                     result.StateDetail = $"FAILED to register: {exception.Message}";
@@ -383,11 +400,36 @@ namespace Utils.Framework
             return discovered;
         }
 
-        private static void stopHostResources(ExtensionHostContext context, IPhinixExtensionModule module)
+        private static bool cleanupModule(IPhinixExtensionModule module, string extensionId,
+            DiscoveredPhinixExtensions discovered, ExtensionHostContext context)
         {
-            IExtensionModuleLifecycleObserver observer;
-            try { if (context.TryGetService(out observer)) observer.OnStopped(module); }
-            catch (Exception error) { context.Log?.Invoke("Host resource cleanup failed: " + error.GetType().Name, LogLevel.WARNING); }
+            bool success = true;
+            Action<string, LogLevel> previousLog = context.Log;
+            context.Log = createScopedLog(context, extensionId, previousLog);
+            try
+            {
+                (module as IActivatablePhinixExtensionModule)?.Shutdown(context);
+            }
+            catch (Exception error)
+            {
+                success = false;
+                discovered.Warnings.Add($"Extension '{extensionId}' cleanup failed: {error.Message}");
+            }
+            finally
+            {
+                context.Log = previousLog;
+                try
+                {
+                    IExtensionModuleLifecycleObserver observer;
+                    if (context.TryGetService(out observer)) observer.OnStopped(module);
+                }
+                catch (Exception error)
+                {
+                    success = false;
+                    discovered.Warnings.Add($"Extension '{extensionId}' host resource cleanup failed: {error.Message}");
+                }
+            }
+            return success;
         }
 
         public static void ActivateExtensions(DiscoveredPhinixExtensions discovered, ExtensionHostContext hostContext = null)
@@ -412,6 +454,7 @@ namespace Utils.Framework
                 {
                     result.State = ExtensionModuleState.Failed;
                     result.StateDetail = $"Dependency '{failedDependency?.ExtensionId ?? "unknown"}' did not activate successfully.";
+                    cleanupModule((IPhinixExtensionModule)module, result.ExtensionId, discovered, hostContext);
                     rollbackRegistration(discovered, hostContext, module.ExtensionId);
                     discovered.Warnings.Add($"Extension '{module.ExtensionId}' was not activated: {result.StateDetail}");
                     continue;
@@ -436,7 +479,8 @@ namespace Utils.Framework
                 }
                 catch (Exception exception)
                 {
-                    stopHostResources(hostContext, (IPhinixExtensionModule)module);
+                    cleanupRegisteredDependents(discovered, hostContext, result.ExtensionId);
+                    cleanupModule((IPhinixExtensionModule)module, result.ExtensionId, discovered, hostContext);
                     rollbackRegistration(discovered, hostContext, module.ExtensionId);
                     if (result != null)
                     {
@@ -452,30 +496,21 @@ namespace Utils.Framework
         {
             hostContext = hostContext ?? ExtensionHostContext.Empty;
 
-            foreach (IActivatablePhinixExtensionModule module in (discovered?.Modules?.OfType<IActivatablePhinixExtensionModule>() ?? Enumerable.Empty<IActivatablePhinixExtensionModule>()).Reverse())
+            foreach (IPhinixExtensionModule module in (discovered?.Modules?.AsEnumerable() ?? Enumerable.Empty<IPhinixExtensionModule>()).Reverse())
             {
                 ExtensionDiscoveryResult result = discovered.ExtensionResults
                     .Find(r => string.Equals(r.ExtensionId, module.ExtensionId, StringComparison.OrdinalIgnoreCase));
 
-                if (result == null || result.State != ExtensionModuleState.Active)
+                if (result == null || (result.State != ExtensionModuleState.Active && result.State != ExtensionModuleState.Registered))
                 {
                     continue;
                 }
 
                 try
                 {
-                    Action<string, LogLevel> previousLog = hostContext.Log;
-                    hostContext.Log = createScopedLog(hostContext, module.ExtensionId, previousLog);
-                    try
-                    {
-                        try { module.Shutdown(hostContext); }
-                        finally { stopHostResources(hostContext, (IPhinixExtensionModule)module); }
-                    }
-                    finally
-                    {
-                        hostContext.Log = previousLog;
-                    }
-                    if (result != null) result.State = ExtensionModuleState.Shutdown;
+                    bool cleaned = cleanupModule(module, result.ExtensionId, discovered, hostContext);
+                    result.State = cleaned ? ExtensionModuleState.Shutdown : ExtensionModuleState.Failed;
+                    if (!cleaned) result.StateDetail = "FAILED to clean up; see extension warnings.";
                     discovered.Diagnostics.Add($"Framework module '{module.ExtensionId}' shut down for host '{hostContext.HostKind ?? "unknown"}'.");
                 }
                 catch (Exception exception)
@@ -491,6 +526,31 @@ namespace Utils.Framework
                 {
                     rollbackRegistration(discovered, hostContext, module.ExtensionId);
                 }
+            }
+        }
+
+        private static void cleanupRegisteredDependents(DiscoveredPhinixExtensions discovered,
+            ExtensionHostContext hostContext, string failedExtensionId)
+        {
+            var failedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { failedExtensionId };
+            // Discovery results are appended in dependency order, so a forward pass
+            // finds the transitive consumers before reverse-order cleanup.
+            foreach (ExtensionDiscoveryResult result in discovered.ExtensionResults)
+            {
+                if (result.DependsOn.Any(failedIds.Contains)) failedIds.Add(result.ExtensionId);
+            }
+            foreach (IPhinixExtensionModule module in discovered.Modules.AsEnumerable().Reverse())
+            {
+                ExtensionDiscoveryResult result = discovered.ExtensionResults.Find(r =>
+                    string.Equals(r.ExtensionId, module.ExtensionId, StringComparison.OrdinalIgnoreCase));
+                if (result == null || result.State != ExtensionModuleState.Registered ||
+                    !failedIds.Contains(result.ExtensionId) ||
+                    string.Equals(result.ExtensionId, failedExtensionId, StringComparison.OrdinalIgnoreCase)) continue;
+                cleanupModule(module, result.ExtensionId, discovered, hostContext);
+                rollbackRegistration(discovered, hostContext, result.ExtensionId);
+                result.State = ExtensionModuleState.Failed;
+                result.StateDetail = $"Dependency '{failedExtensionId}' did not activate successfully.";
+                discovered.Warnings.Add($"Extension '{result.ExtensionId}' was not activated: {result.StateDetail}");
             }
         }
 

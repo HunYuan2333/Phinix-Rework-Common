@@ -74,6 +74,11 @@ namespace Utils.Framework
     {
         void Activate(ExtensionHostContext hostContext);
 
+        /// <summary>
+        /// Releases module-owned resources, including resources acquired before a
+        /// Register or Activate failure. Borrowed host services and APIs remain owned
+        /// by their providers. Cleanup must tolerate incomplete initialization.
+        /// </summary>
         void Shutdown(ExtensionHostContext hostContext);
     }
 
@@ -505,6 +510,17 @@ namespace Utils.Framework
             if (service == null) return;
 
             services[typeof(T)] = service;
+        }
+
+        /// <summary>Detaches this owner only if it still holds the service slot. Does not dispose the service.</summary>
+        public bool RemoveService<T>(T service) where T : class
+        {
+            if (service == null || !services.TryGetValue(typeof(T), out object registered) || !ReferenceEquals(registered, service))
+            {
+                return false;
+            }
+
+            return services.Remove(typeof(T));
         }
 
         public bool TryGetService<T>(out T service) where T : class
