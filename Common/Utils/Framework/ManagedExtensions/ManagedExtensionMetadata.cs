@@ -341,7 +341,18 @@ namespace Utils.Framework.ManagedExtensions
                 if ((encoded & 3) != 1) return false;
                 int at = Row(1, encoded >> 2), scope = Index(ref at, Ci(2, 0, 26, 35, 1));
                 string name = Str(Index(ref at, stringWidth)), ns = Str(Index(ref at, stringWidth));
-                return name == "IPhinixExtensionModule" && ns == "Utils.Framework" && (scope & 3) == 2 && Identity(35, scope >> 2).Name == "Utils";
+                if ((scope & 3) != 2) return false;
+                string assembly = Identity(35, scope >> 2).Name;
+                return name == "IPhinixExtensionModule" && ns == "Utils.Framework" && assembly == "Utils" ||
+                    name == "IClientExtensionModule" && ns == "PhinixClient.Framework" && assembly == "ClientExtensionAbstractions";
+            }
+            private bool IsClientModuleBase(int encoded)
+            {
+                if ((encoded & 3) != 1) return false;
+                int at = Row(1, encoded >> 2), scope = Index(ref at, Ci(2, 0, 26, 35, 1));
+                string name = Str(Index(ref at, stringWidth)), ns = Str(Index(ref at, stringWidth));
+                return name == "ClientExtensionModule" && ns == "PhinixClient.Framework" &&
+                    (scope & 3) == 2 && Identity(35, scope >> 2).Name == "ClientExtensionAbstractions";
             }
             private bool ImplementsModule(int row, HashSet<int> visiting)
             {
@@ -353,8 +364,9 @@ namespace Utils.Framework.ManagedExtensions
                         if (IsModuleReference(iface) || (iface & 3) == 0 && iface != 0 && ImplementsModule(iface >> 2, new HashSet<int>(visiting))) { moduleCache[row] = true; return true; }
                 int type = Row(2, row) + 4 + 2 * stringWidth;
                 int parent = Index(ref type, Ci(2, 2, 1, 27));
-                // Inheritance from another package is deliberately unsupported by this static gate.
-                bool result = parent != 0 && (parent & 3) == 0 && ImplementsModule(parent >> 2, visiting);
+                // Only the known client host bridge may be inherited externally.
+                // Arbitrary inheritance from another package remains unsupported.
+                bool result = IsClientModuleBase(parent) || parent != 0 && (parent & 3) == 0 && ImplementsModule(parent >> 2, visiting);
                 moduleCache[row] = result; return result;
             }
             private bool IsEntry(int row)
