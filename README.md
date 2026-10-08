@@ -1,4 +1,4 @@
-# Phinix-Common
+# Phinix-Rework-Common
 
 Phinix 共享源码：游戏无关的网络、认证、用户管理、框架运行时及 Chat/Trade 中立契约。
 
@@ -12,8 +12,8 @@ Shared game-independent networking, authentication, user management, framework r
 正式远端就绪后 / Once the reviewed remote commits are published:
 
 ```bash
-git clone --recurse-submodules https://github.com/HunYuan2333/Phinix-Common.git
-cd Phinix-Common
+git clone --recurse-submodules https://github.com/HunYuan2333/Phinix-Rework-Common.git
+cd Phinix-Rework-Common
 ```
 
 已有 checkout 可执行 / For an existing checkout:
