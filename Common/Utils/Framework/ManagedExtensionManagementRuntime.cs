@@ -166,7 +166,7 @@ namespace Utils.Framework
         {
             var available=startupHost.ModuleIds.Where(id=>!disabled.Contains(id));
             var facts=new ManagedExtensionHostFacts(startupHost.GameVersion,startupHost.PhinixVersion.ToString(),startupHost.AbstractionsVersion.ToString(),
-                startupHost.Assemblies,startupHost.ModuleIds,available,startupHost.ActiveModIds,startupHost.ModuleDeclarations);
+                startupHost.Assemblies,startupHost.ModuleIds,available,startupHost.ActiveModIds,startupHost.ModuleDeclarations,startupHost.ReferenceRules);
             var planned=ManagedExtensionCandidatePlanner.Plan(new ManagedExtensionInventorySnapshot(rows,new string[0]),payloads,facts,startupId,token);
             var targetKeys=new HashSet<string>(targets,StringComparer.Ordinal);
             foreach(var result in planned.Where(p=>targetKeys.Contains(p.Package.RecordKey)))

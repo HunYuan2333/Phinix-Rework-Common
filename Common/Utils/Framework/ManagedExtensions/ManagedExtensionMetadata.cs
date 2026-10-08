@@ -9,6 +9,20 @@ using System.Text;
 
 namespace Utils.Framework.ManagedExtensions
 {
+    public enum ManagedHostReferenceVersionPolicy { CompatibleUpgrade, SameReleaseFamily }
+
+    public sealed class ManagedHostReferenceRule
+    {
+        public ManagedHostReferenceRule(string assemblyName, ManagedHostReferenceVersionPolicy versionPolicy)
+        {
+            if (string.IsNullOrWhiteSpace(assemblyName)) throw new ArgumentException("Assembly name is required.", nameof(assemblyName));
+            if (!Enum.IsDefined(typeof(ManagedHostReferenceVersionPolicy), versionPolicy)) throw new ArgumentOutOfRangeException(nameof(versionPolicy));
+            AssemblyName = assemblyName; VersionPolicy = versionPolicy;
+        }
+        public string AssemblyName { get; }
+        public ManagedHostReferenceVersionPolicy VersionPolicy { get; }
+    }
+
     public sealed class ManagedAssemblyIdentity
     {
         internal ManagedAssemblyIdentity(string name, string version, string culture, string token)
@@ -21,22 +35,34 @@ namespace Utils.Framework.ManagedExtensions
         /// <summary>Host libraries may satisfy older references within the same major version.
         /// This policy does not change payload identity or package dependency locks.</summary>
         public bool CanProvideHostReference(ManagedAssemblyIdentity required)
+            => CanProvideHostReference(required, ManagedHostReferenceVersionPolicy.CompatibleUpgrade);
+        public bool CanProvideHostReference(ManagedAssemblyIdentity required, ManagedHostReferenceVersionPolicy policy)
         {
+            if (!Enum.IsDefined(typeof(ManagedHostReferenceVersionPolicy), policy)) throw new ArgumentOutOfRangeException(nameof(policy));
             if (required == null || !string.Equals(Name, required.Name, StringComparison.OrdinalIgnoreCase) ||
                 !string.Equals(Culture, required.Culture, StringComparison.OrdinalIgnoreCase) ||
                 !string.Equals(PublicKeyToken, required.PublicKeyToken, StringComparison.OrdinalIgnoreCase)) return false;
             System.Version availableVersion, requiredVersion;
-            return System.Version.TryParse(Version, out availableVersion) && System.Version.TryParse(required.Version, out requiredVersion) &&
-                availableVersion.Major == requiredVersion.Major && availableVersion.CompareTo(requiredVersion) >= 0;
+            if (!System.Version.TryParse(Version, out availableVersion) || !System.Version.TryParse(required.Version, out requiredVersion)) return false;
+            if (policy == ManagedHostReferenceVersionPolicy.SameReleaseFamily)
+                return availableVersion.Major == requiredVersion.Major && availableVersion.Minor == requiredVersion.Minor;
+            return availableVersion.Major == requiredVersion.Major && availableVersion.CompareTo(requiredVersion) >= 0;
         }
         public static ManagedAssemblyIdentity SelectHostReference(ManagedAssemblyIdentity required, IEnumerable<ManagedAssemblyIdentity> available)
+            => SelectHostReference(required, available, new ManagedHostReferenceRule[0]);
+        public static ManagedAssemblyIdentity SelectHostReference(ManagedAssemblyIdentity required, IEnumerable<ManagedAssemblyIdentity> available,
+            IEnumerable<ManagedHostReferenceRule> rules)
         {
             if (required == null) throw new ArgumentNullException(nameof(required));
             if (available == null) throw new ArgumentNullException(nameof(available));
+            if (rules == null) throw new ArgumentNullException(nameof(rules));
+            var matchingRules = rules.Where(r => string.Equals(r.AssemblyName, required.Name, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (matchingRules.Count > 1) return null;
+            var policy = matchingRules.Count == 0 ? ManagedHostReferenceVersionPolicy.CompatibleUpgrade : matchingRules[0].VersionPolicy;
             var identities = available.ToList();
             var exact = identities.Where(a => a.FullName == required.FullName).ToList();
             if (exact.Count != 0) return exact.Count == 1 ? exact[0] : null;
-            var compatible = identities.Where(a => a.CanProvideHostReference(required)).ToList();
+            var compatible = identities.Where(a => a.CanProvideHostReference(required, policy)).ToList();
             // Do not silently choose among multiple loaded host versions.
             return compatible.Count == 1 ? compatible[0] : null;
         }
@@ -351,7 +377,7 @@ namespace Utils.Framework.ManagedExtensions
                 if ((encoded & 3) != 1) return false;
                 int at = Row(1, encoded >> 2), scope = Index(ref at, Ci(2, 0, 26, 35, 1));
                 string name = Str(Index(ref at, stringWidth)), ns = Str(Index(ref at, stringWidth));
-                return name == "ClientExtensionModule" && ns == "PhinixClient.Framework" &&
+                return (name == "ClientExtensionModule" || name == "LegacyClientExtensionModule") && ns == "PhinixClient.Framework" &&
                     (scope & 3) == 2 && Identity(35, scope >> 2).Name == "ClientExtensionAbstractions";
             }
             private bool ImplementsModule(int row, HashSet<int> visiting)
@@ -364,7 +390,7 @@ namespace Utils.Framework.ManagedExtensions
                         if (IsModuleReference(iface) || (iface & 3) == 0 && iface != 0 && ImplementsModule(iface >> 2, new HashSet<int>(visiting))) { moduleCache[row] = true; return true; }
                 int type = Row(2, row) + 4 + 2 * stringWidth;
                 int parent = Index(ref type, Ci(2, 2, 1, 27));
-                // Only the known client host bridge may be inherited externally.
+                // Only the known client contract bases may be inherited externally.
                 // Arbitrary inheritance from another package remains unsupported.
                 bool result = IsClientModuleBase(parent) || parent != 0 && (parent & 3) == 0 && ImplementsModule(parent >> 2, visiting);
                 moduleCache[row] = result; return result;

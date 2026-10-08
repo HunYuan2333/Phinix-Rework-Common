@@ -101,7 +101,7 @@ namespace Utils.Framework
                     foreach(var entry in entries.Values)
                     foreach(var reference in entry.Bytes.Metadata.References.Where(r=>!entries.ContainsKey(r.FullName)))
                     {
-                        var selected=ManagedAssemblyIdentity.SelectHostReference(reference,actualHost);
+                        var selected=ManagedAssemblyIdentity.SelectHostReference(reference,actualHost,host.ReferenceRules);
                         if(selected==null) { entry.Package.Code="ManagedHostAssemblyUnavailable"; break; }
                         // Freeze aliases to actual pre-start assemblies. Resolution never probes a
                         // directory, loads another version or adopts an assembly loaded later.

@@ -21,7 +21,12 @@ namespace Utils.Framework.ManagedExtensions
             : this(gameVersion, phinixVersion, abstractionsVersion, assemblies, modules, modules, activeMods) { }
         public ManagedExtensionHostFacts(string gameVersion, string phinixVersion, string abstractionsVersion,
             IEnumerable<ManagedAssemblyIdentity> assemblies, IEnumerable<string> modules, IEnumerable<string> availableModules, IEnumerable<string> activeMods, IEnumerable<ManagedExtensionHostModule> moduleDeclarations = null)
+            : this(gameVersion, phinixVersion, abstractionsVersion, assemblies, modules, availableModules, activeMods, moduleDeclarations, new ManagedHostReferenceRule[0]) { }
+        public ManagedExtensionHostFacts(string gameVersion, string phinixVersion, string abstractionsVersion,
+            IEnumerable<ManagedAssemblyIdentity> assemblies, IEnumerable<string> modules, IEnumerable<string> availableModules, IEnumerable<string> activeMods,
+            IEnumerable<ManagedExtensionHostModule> moduleDeclarations, IEnumerable<ManagedHostReferenceRule> referenceRules)
         {
+            ReferenceRules = ManagedExtensionCompatibility.Freeze(referenceRules ?? throw new ArgumentNullException(nameof(referenceRules)));
             GameVersion = gameVersion ?? throw new ArgumentNullException(nameof(gameVersion));
             PhinixVersion = ManagedExtensionVersion.Parse(phinixVersion); AbstractionsVersion = ManagedExtensionVersion.Parse(abstractionsVersion);
             Assemblies = ManagedExtensionCompatibility.Freeze(assemblies ?? throw new ArgumentNullException(nameof(assemblies)));
@@ -30,6 +35,7 @@ namespace Utils.Framework.ManagedExtensions
             ActiveModIds = ManagedExtensionCompatibility.Freeze(activeMods ?? throw new ArgumentNullException(nameof(activeMods)));
             ModuleDeclarations=ManagedExtensionCompatibility.Freeze(moduleDeclarations ?? new ManagedExtensionHostModule[0]);
         }
+        public ReadOnlyCollection<ManagedHostReferenceRule> ReferenceRules { get; }
         public string GameVersion { get; }
         public ManagedExtensionVersion PhinixVersion { get; }
         public ManagedExtensionVersion AbstractionsVersion { get; }
@@ -149,7 +155,7 @@ namespace Utils.Framework.ManagedExtensions
                     // Owned/package references retain exact locks. Only declared host libraries
                     // may upgrade within one major; manifest compatibility remains independent.
                     bool satisfied = ownedRefs.Count != 0 ? ownedRefs.Count(n => n == reference.FullName) == 1 :
-                        ManagedAssemblyIdentity.SelectHostReference(reference, hostRefs) != null;
+                        ManagedAssemblyIdentity.SelectHostReference(reference, hostRefs, host.ReferenceRules) != null;
                     if (!satisfied)
                     {
                         codes[row] = "CandidateAssemblyReferenceUnavailable";

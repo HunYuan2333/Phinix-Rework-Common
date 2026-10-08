@@ -8,6 +8,103 @@ namespace Utils.Framework
 {
     public static class ExtensionAssemblyLoader
     {
+        /// <summary>Loads an explicit host-owned directory set. The resolver never handles
+        /// foreign requesters or probes files added after preparation. Dispose detaches it;
+        /// already loaded assemblies remain subject to normal CLR lifetime rules.</summary>
+        public static IDisposable LoadOwnedAssemblies(IEnumerable<string> directories, Action<string, LogLevel> log = null)
+        {
+            var scope = new OwnedLoader(directories, log);
+            try { scope.Start(); return scope; }
+            catch { scope.Dispose(); throw; }
+        }
+
+        private sealed class OwnedLoader : IDisposable
+        {
+            private sealed class Candidate
+            {
+                internal string Path;
+                internal AssemblyName Identity;
+            }
+            private readonly List<Candidate> candidates = new List<Candidate>();
+            private readonly HashSet<string> paths;
+            private readonly Action<string, LogLevel> log;
+            private bool disposed;
+            internal OwnedLoader(IEnumerable<string> directories, Action<string, LogLevel> log)
+            {
+                this.log = log;
+                paths = new HashSet<string>(Path.DirectorySeparatorChar == '\\' ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+                foreach (string directory in (directories ?? Array.Empty<string>()).Where(d => !string.IsNullOrWhiteSpace(d)).Select(Path.GetFullPath).Distinct(paths.Comparer))
+                {
+                    if (!Directory.Exists(directory)) continue;
+                    foreach (string file in Directory.EnumerateFiles(directory, "*.dll", SearchOption.TopDirectoryOnly).OrderBy(p => p, StringComparer.Ordinal))
+                    {
+                        try
+                        {
+                            if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) throw new IOException("Linked assembly file is not an owned candidate.");
+                            var name = AssemblyName.GetAssemblyName(file);
+                            if (paths.Add(Path.GetFullPath(file))) candidates.Add(new Candidate { Path = Path.GetFullPath(file), Identity = name });
+                        }
+                        catch (Exception ex) { Report("Skipped owned assembly candidate '" + file + "': " + ex.Message, LogLevel.WARNING); }
+                    }
+                }
+                foreach (var group in candidates.GroupBy(c => c.Identity.Name, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1).ToArray())
+                {
+                    Report("Ambiguous owned assembly name: " + group.Key, LogLevel.WARNING);
+                    foreach (var candidate in group) { candidates.Remove(candidate); paths.Remove(candidate.Path); }
+                }
+            }
+            private void Report(string message, LogLevel level)
+            { try { log?.Invoke(message, level); } catch { } }
+            internal void Start()
+            {
+                // Install before the first LoadFrom so initial dependency requests are scoped too.
+                AppDomain.CurrentDomain.AssemblyResolve += Resolve;
+                foreach (var candidate in candidates)
+                {
+                    try
+                    {
+                        var loaded = AppDomain.CurrentDomain.GetAssemblies().Where(a => !a.IsDynamic && string.Equals(a.GetName().Name, candidate.Identity.Name, StringComparison.OrdinalIgnoreCase)).ToArray();
+                        if (loaded.Length != 0)
+                        {
+                            if (loaded.Length != 1 || loaded[0].GetName().FullName != candidate.Identity.FullName)
+                                Report("Owned assembly identity conflict: " + candidate.Identity.FullName, LogLevel.WARNING);
+                            continue;
+                        }
+                        Load(candidate);
+                    }
+                    catch (Exception ex) { Report("Owned assembly load failed: " + candidate.Identity.FullName + ": " + ex.Message, LogLevel.WARNING); }
+                }
+            }
+            private Assembly Load(Candidate candidate)
+            {
+                // Recheck identity; never substitute another identity via Assembly.Load fallback.
+                if (AssemblyName.GetAssemblyName(candidate.Path).FullName != candidate.Identity.FullName)
+                    throw new IOException("Owned assembly identity changed during loading.");
+                var assembly = Assembly.LoadFrom(candidate.Path);
+                if (assembly.GetName().FullName != candidate.Identity.FullName) throw new IOException("Loaded assembly identity differs from the candidate.");
+                return assembly;
+            }
+            private Assembly Resolve(object sender, ResolveEventArgs args)
+            {
+                if (disposed || args.RequestingAssembly == null || args.RequestingAssembly.IsDynamic) return null;
+                string requester;
+                try { requester = args.RequestingAssembly.Location; }
+                catch (NotSupportedException) { return null; }
+                if (string.IsNullOrEmpty(requester) || !paths.Contains(Path.GetFullPath(requester))) return null;
+                if (!args.RequestingAssembly.GetReferencedAssemblies().Any(r => r.FullName == args.Name)) return null;
+                var candidate = candidates.SingleOrDefault(c => c.Identity.FullName == args.Name);
+                if (candidate == null) return null;
+                try { return Load(candidate); }
+                catch (Exception ex) { Report("Owned dependency resolution failed: " + args.Name + ": " + ex.Message, LogLevel.WARNING); return null; }
+            }
+            public void Dispose()
+            {
+                if (disposed) return;
+                disposed = true;
+                AppDomain.CurrentDomain.AssemblyResolve -= Resolve;
+            }
+        }
+
         private static readonly HashSet<string> probeDirectoriesStore = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, string> assemblyFileCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private static readonly object assemblyFileCacheLock = new object();
