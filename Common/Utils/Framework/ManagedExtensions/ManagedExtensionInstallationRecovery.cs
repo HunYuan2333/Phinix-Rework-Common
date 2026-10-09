@@ -366,6 +366,11 @@ namespace Utils.Framework.ManagedExtensions
         }
         private static byte[] SerializeReceipt(ManagedExtensionPackageSnapshot row,IEnumerable<ManagedExtensionFile> files)
         {
+            if(row.IsLocalDevelopment)
+                return Encoding.UTF8.GetBytes("{\"schemaVersion\":2,\"sourceKind\":\"local-development\",\"sourceId\":\""+row.SourceId+
+                    "\",\"packageId\":\""+row.PackageId+"\",\"version\":\""+row.Version+"\",\"manifestSha256\":\""+row.ManifestSha256+
+                    "\",\"artifactSha256\":\""+row.ArtifactSha256+"\",\"installationTransactionId\":\""+row.InstallationTransactionId+"\",\"files\":["+
+                    string.Join(",",files.OrderBy(f=>f.Path,StringComparer.Ordinal).Select(f=>"{\"path\":\""+f.Path+"\",\"length\":"+f.Length.ToString(System.Globalization.CultureInfo.InvariantCulture)+",\"sha256\":\""+f.Sha256+"\"}"))+"]}");
             return Encoding.UTF8.GetBytes("{\"schemaVersion\":1,\"sourceId\":\""+row.SourceId+"\",\"repositoryIdentitySha256\":\""+row.RepositoryIdentitySha256+
                 "\",\"packageId\":\""+row.PackageId+"\",\"version\":\""+row.Version+"\",\"manifestSha256\":\""+row.ManifestSha256+"\",\"catalogSnapshotId\":\""+row.CatalogSnapshotId+
                 "\",\"catalogSha256\":\""+row.CatalogSha256+"\",\"artifactSha256\":\""+row.ArtifactSha256+"\",\"installationTransactionId\":\""+row.InstallationTransactionId+"\",\"files\":["+
@@ -409,7 +414,8 @@ namespace Utils.Framework.ManagedExtensions
             var manifest=ManagedExtensionManifestReader.Read(item.OldManifestBytes);
             if(old.SourceId!=item.Row.SourceId || old.IdentityHash!=item.Row.RepositoryIdentitySha256 || old.PackageId!=item.Row.PackageId ||
                 old.ManifestHash!=ManagedExtensionPaths.Hash(item.OldManifestBytes) || manifest.PackageId!=old.PackageId || manifest.Version.ToString()!=old.Version ||
-                manifest.Version.CompareTo(item.Row.Manifest.Version)>=0) throw Error("ManagedReplacementIdentityInvalid");
+                (item.Row.IsLocalDevelopment?manifest.Version.CompareTo(item.Row.Manifest.Version)>0 || old.ArtifactHash==item.Row.ArtifactSha256:
+                    manifest.Version.CompareTo(item.Row.Manifest.Version)>=0)) throw Error("ManagedReplacementIdentityInvalid");
             var state=ManagedExtensionJson.Object(ManagedExtensionJson.Read(item.OldStateBytes,8192),"schemaVersion","sourceId","packageId","manifestSha256","operationId","desiredState");
             string operation=ManagedExtensionJson.Hex(ManagedExtensionJson.Required(state,"operationId"),32);
             item.OldRow=new ManagedExtensionPackageSnapshot(item.Row.RecordKey,old.SourceId,old.IdentityHash,old.PackageId,old.Version,old.ManifestHash,old.SnapshotId,old.CatalogHash,

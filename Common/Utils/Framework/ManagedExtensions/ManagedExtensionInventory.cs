@@ -72,6 +72,7 @@ namespace Utils.Framework.ManagedExtensions
         }
         public string RecordKey { get; }
         public string SourceId { get; }
+        public bool IsLocalDevelopment => SourceId==ManagedExtensionInstallPackage.LocalDevelopmentSourceId && CatalogSnapshotId==null;
         public string RepositoryIdentitySha256 { get; }
         public string PackageId { get; }
         public string Version { get; }
@@ -201,14 +202,22 @@ namespace Utils.Framework.ManagedExtensions
         {
             var f = ManagedExtensionJson.Object(ManagedExtensionJson.Read(bytes, MaxRecordBytes),
                 "schemaVersion", "sourceId", "repositoryIdentitySha256", "packageId", "version", "manifestSha256", "catalogSnapshotId",
-                "catalogSha256", "artifactSha256", "installationTransactionId", "files");
-            if (ManagedExtensionJson.Integer(Get(f, "schemaVersion"), 1, int.MaxValue) != 1) throw ManagedExtensionJson.Error("UnsupportedReceiptSchema");
+                "catalogSha256", "artifactSha256", "installationTransactionId", "files", "sourceKind");
+            long schema=ManagedExtensionJson.Integer(Get(f,"schemaVersion"),1,int.MaxValue);
+            bool local=schema==2;
+            if(schema!=1 && schema!=2) throw ManagedExtensionJson.Error("UnsupportedReceiptSchema");
+            if(local && (ManagedExtensionJson.Text(Get(f,"sourceKind"),32)!="local-development" ||
+                ManagedExtensionJson.Id(Get(f,"sourceId"))!=ManagedExtensionInstallPackage.LocalDevelopmentSourceId ||
+                f.ContainsKey("repositoryIdentitySha256") || f.ContainsKey("catalogSnapshotId") || f.ContainsKey("catalogSha256")))
+                throw ManagedExtensionJson.Error("ManagedInstallProvenanceMismatch");
+            if(!local && (f.ContainsKey("sourceKind") || ManagedExtensionJson.Id(Get(f,"sourceId"))==ManagedExtensionInstallPackage.LocalDevelopmentSourceId))
+                throw ManagedExtensionJson.Error("ManagedInstallProvenanceMismatch");
             var result = new Receipt
             {
-                SourceId = ManagedExtensionJson.Id(Get(f, "sourceId")), IdentityHash = ManagedExtensionJson.Hex(Get(f, "repositoryIdentitySha256"), 64),
+                SourceId = ManagedExtensionJson.Id(Get(f, "sourceId")), IdentityHash = local?null:ManagedExtensionJson.Hex(Get(f, "repositoryIdentitySha256"), 64),
                 PackageId = ManagedExtensionJson.Id(Get(f, "packageId")), Version = ManagedExtensionVersion.Parse(ManagedExtensionJson.Text(Get(f, "version"), 32)).ToString(),
                 ManifestHash = ManagedExtensionJson.Hex(Get(f, "manifestSha256"), 64), TransactionId = ManagedExtensionJson.Hex(Get(f, "installationTransactionId"), 32),
-                SnapshotId = ManagedExtensionJson.Hex(Get(f, "catalogSnapshotId"), 40), CatalogHash = ManagedExtensionJson.Hex(Get(f, "catalogSha256"), 64),
+                SnapshotId = local?null:ManagedExtensionJson.Hex(Get(f, "catalogSnapshotId"), 40), CatalogHash = local?null:ManagedExtensionJson.Hex(Get(f, "catalogSha256"), 64),
                 ArtifactHash = ManagedExtensionJson.Hex(Get(f, "artifactSha256"), 64),
                 Files = new List<ManagedExtensionFile>()
             };

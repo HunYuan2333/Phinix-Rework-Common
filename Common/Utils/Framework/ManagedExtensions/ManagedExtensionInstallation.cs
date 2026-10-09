@@ -16,16 +16,26 @@ namespace Utils.Framework.ManagedExtensions
             : this(sourceId,identityHash,snapshotId,catalogHash,artifactHash,manifest,files,null) { }
         public ManagedExtensionInstallPackage(string sourceId,string identityHash,string snapshotId,string catalogHash,
             string artifactHash,byte[] manifest,IReadOnlyDictionary<string,byte[]> files,ManagedExtensionPackageSnapshot replacement)
+            : this(sourceId,identityHash,snapshotId,catalogHash,artifactHash,manifest,files,replacement,false) { }
+        public const string LocalDevelopmentSourceId="local-development";
+        public static ManagedExtensionInstallPackage LocalDevelopment(string artifactHash,byte[] manifest,
+            IReadOnlyDictionary<string,byte[]> files,ManagedExtensionPackageSnapshot replacement=null)
+            => new ManagedExtensionInstallPackage(LocalDevelopmentSourceId,null,null,null,artifactHash,manifest,files,replacement,true);
+        private ManagedExtensionInstallPackage(string sourceId,string identityHash,string snapshotId,string catalogHash,
+            string artifactHash,byte[] manifest,IReadOnlyDictionary<string,byte[]> files,ManagedExtensionPackageSnapshot replacement,bool local)
         {
-            SourceId=ManagedExtensionJson.Identifier(sourceId); RepositoryIdentitySha256=ManagedExtensionJson.Hex(identityHash,64);
-            CatalogSnapshotId=ManagedExtensionJson.Hex(snapshotId,40); CatalogSha256=ManagedExtensionJson.Hex(catalogHash,64);
+            SourceId=ManagedExtensionJson.Identifier(sourceId);
+            if(!local && SourceId==LocalDevelopmentSourceId) throw ManagedExtensionJson.Error("ManagedInstallProvenanceMismatch");
+            RepositoryIdentitySha256=local?null:ManagedExtensionJson.Hex(identityHash,64);
+            CatalogSnapshotId=local?null:ManagedExtensionJson.Hex(snapshotId,40); CatalogSha256=local?null:ManagedExtensionJson.Hex(catalogHash,64);
             ArtifactSha256=ManagedExtensionJson.Hex(artifactHash,64);
             if(manifest==null || manifest.Length==0 || manifest.Length>ManagedExtensionManifestReader.MaxManifestBytes) throw ManagedExtensionJson.Error("DocumentLimit");
             ManifestBytes=(byte[])manifest.Clone(); Manifest=ManagedExtensionManifestReader.Read(ManifestBytes);
             if(replacement!=null && (replacement.SourceId!=SourceId || replacement.RepositoryIdentitySha256!=RepositoryIdentitySha256 ||
                 replacement.PackageId!=Manifest.PackageId || replacement.DesiredState!=ManagedExtensionDesiredState.Enabled ||
                 replacement.ContentState!=ManagedExtensionContentState.ContentVerified || replacement.DiagnosticCode!=null ||
-                Manifest.Version.CompareTo(ManagedExtensionVersion.Parse(replacement.Version))<=0)) throw ManagedExtensionJson.Error("ManagedReplacementIdentityInvalid");
+                (local?Manifest.Version.CompareTo(ManagedExtensionVersion.Parse(replacement.Version))<0 || replacement.ArtifactSha256==ArtifactSha256:
+                    Manifest.Version.CompareTo(ManagedExtensionVersion.Parse(replacement.Version))<=0))) throw ManagedExtensionJson.Error("ManagedReplacementIdentityInvalid");
             Replacement=replacement;
             if(files==null || files.Count!=Manifest.Assemblies.Count+Manifest.Resources.Count) throw ManagedExtensionJson.Error("ManagedInstallFilesMismatch");
             var expected=Manifest.Assemblies.Select(a=>a.File).Concat(Manifest.Resources).ToDictionary(f=>f.Path,StringComparer.Ordinal);
@@ -55,6 +65,8 @@ namespace Utils.Framework.ManagedExtensions
     {
         public const int MaxPackages=32;
         public ManagedExtensionInstallRequest(IEnumerable<ManagedExtensionInstallPackage> packages)
+            : this(packages,null) { }
+        public ManagedExtensionInstallRequest(IEnumerable<ManagedExtensionInstallPackage> packages,Action<CancellationToken> revalidateAuthorization)
         {
             if(packages==null) throw new ArgumentNullException(nameof(packages));
             var items=new List<ManagedExtensionInstallPackage>(); long total=0;
@@ -71,8 +83,11 @@ namespace Utils.Framework.ManagedExtensions
                 throw ManagedExtensionJson.Error("ManagedInstallProvenanceMismatch");
             if(items.Select(p=>p.Manifest.PackageId).Distinct(StringComparer.Ordinal).Count()!=items.Count) throw ManagedExtensionJson.Error("ManagedInstallPackageConflict");
             Packages=items.AsReadOnly();
+            RevalidateAuthorization=revalidateAuthorization;
         }
         public ReadOnlyCollection<ManagedExtensionInstallPackage> Packages { get; }
+        // Input policy may cancel before the durable decision. Recovery never rechecks transient authorization.
+        internal Action<CancellationToken> RevalidateAuthorization { get; }
     }
 
     public sealed class ManagedExtensionInstallResult

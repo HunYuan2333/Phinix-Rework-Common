@@ -32,12 +32,14 @@ namespace Utils.Framework
                     foreach(var row in rows) Emit("install","ManagedInstallRequested",row);
                     foreach(var package in request.Packages.Where(p=>p.Replacement!=null)) Emit("install","ManagedReplacementOriginal",CopyState(package.Replacement,ManagedExtensionDesiredState.Enabled,operation));
                     ValidateInstallation(request,rows,inventory,disabled,token);
+                    request.RevalidateAuthorization?.Invoke(token);
                     foreach(var row in rows) Emit("install","ManagedInstallPreflightPassed",row);
                     ManagedExtensionInstallationRecovery.Install(paths,request,rows,token,InstallationFault,(c,r)=>Emit("install",c,r),t=>
                     {
                         var fresh=ManagedExtensionInventoryReader.Read(paths,t);
                         if(fresh.Diagnostics.Count!=0 || !SameInventory(inventory,fresh)) throw ManagedExtensionJson.Error("ManagedStateChanged");
                         ValidateInstallation(request,rows,fresh,disabled,t);
+                        request.RevalidateAuthorization?.Invoke(t);
                         foreach(var row in rows) Emit("install","ManagedInstallCommitRevalidated",row);
                     },()=>writing=true);
                     return new ManagedExtensionInstallResult(true,"ManagedInstallSaved",operation,rows);
