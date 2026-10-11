@@ -1,3 +1,4 @@
+using System.Linq;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -196,10 +197,37 @@ namespace Utils.Framework
         IReadOnlyList<T> ResolveApis<T>() where T : class;
     }
 
+    public sealed class ExtensionApiProviderInfo
+    {
+        internal ExtensionApiProviderInfo(string ownerId,long registrationId) {OwnerId=ownerId;RegistrationId=registrationId;}
+        public string OwnerId { get; }
+        public long RegistrationId { get; }
+    }
+
     public sealed class ExtensionApiRegistry : IExtensionApiRegistry
     {
         private readonly Dictionary<Type, List<ApiRegistration>> registrations = new Dictionary<Type, List<ApiRegistration>>();
         private readonly object syncRoot = new object();
+        private long revision,registrationSequence;
+        public long Revision { get {lock(syncRoot) return revision;} }
+
+        public IReadOnlyList<ExtensionApiProviderInfo> CaptureProviders<T>() where T:class
+        {
+            lock(syncRoot)
+            {
+                if(!registrations.TryGetValue(typeof(T),out var values)) return Array.AsReadOnly(new ExtensionApiProviderInfo[0]);
+                return values.Select(p=>new ExtensionApiProviderInfo(p.ExtensionId,p.Id)).ToList().AsReadOnly();
+            }
+        }
+        public bool TryGetProvider<T>(long registrationId,out T implementation) where T:class
+        {
+            lock(syncRoot)
+            {
+                if(registrations.TryGetValue(typeof(T),out var values))
+                {var value=values.FirstOrDefault(p=>p.Id==registrationId);if(value!=null) {implementation=(T)value.Implementation;return true;}}
+                implementation=null;return false;
+            }
+        }
 
         public void RegisterApi<T>(string extensionId, T implementation) where T : class
         {
@@ -277,6 +305,7 @@ namespace Utils.Framework
                 {
                     registrations.Remove(emptyType);
                 }
+                if(removed!=0) revision++;
             }
 
             return removed;
@@ -317,7 +346,8 @@ namespace Utils.Framework
                         $"Framework API '{apiType.FullName}' accepts one provider; extension '{extensionId}' was rejected because '{providers[0].ExtensionId}' is already registered.");
                 }
 
-                providers.Add(new ApiRegistration(extensionId, implementation));
+                providers.Add(new ApiRegistration(extensionId, implementation,++registrationSequence));
+                revision++;
                 if (providers.Count > 1)
                 {
                     return ExtensionApiRegistrationResult.CreateSuccess(
@@ -332,8 +362,9 @@ namespace Utils.Framework
 
         private sealed class ApiRegistration
         {
-            public ApiRegistration(string extensionId, object implementation)
+            public ApiRegistration(string extensionId, object implementation,long id)
             {
+                Id=id;
                 ExtensionId = extensionId ?? string.Empty;
                 Implementation = implementation;
             }
@@ -341,6 +372,7 @@ namespace Utils.Framework
             public string ExtensionId { get; }
 
             public object Implementation { get; }
+            public long Id { get; }
         }
     }
 

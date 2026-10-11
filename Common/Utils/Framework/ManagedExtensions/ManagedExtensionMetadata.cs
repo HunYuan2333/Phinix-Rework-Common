@@ -377,7 +377,7 @@ namespace Utils.Framework.ManagedExtensions
                 if ((encoded & 3) != 1) return false;
                 int at = Row(1, encoded >> 2), scope = Index(ref at, Ci(2, 0, 26, 35, 1));
                 string name = Str(Index(ref at, stringWidth)), ns = Str(Index(ref at, stringWidth));
-                return (name == "ClientExtensionModule" || name == "LegacyClientExtensionModule") && ns == "PhinixClient.Framework" &&
+                return name == "ClientExtensionModule" && ns == "PhinixClient.Framework" &&
                     (scope & 3) == 2 && Identity(35, scope >> 2).Name == "ClientExtensionAbstractions";
             }
             private bool ImplementsModule(int row, HashSet<int> visiting)

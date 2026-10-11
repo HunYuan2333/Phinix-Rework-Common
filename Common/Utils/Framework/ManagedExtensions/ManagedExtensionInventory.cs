@@ -16,10 +16,11 @@ namespace Utils.Framework.ManagedExtensions
     /// <summary>Stable allocation only. No directory creation or filesystem certification.</summary>
     public sealed class ManagedExtensionPaths
     {
-        public ManagedExtensionPaths(string saveDataRoot)
+        public ManagedExtensionPaths(string saveDataRoot) : this(saveDataRoot, "ManagedExtensions") { }
+        internal ManagedExtensionPaths(string saveDataRoot, string area)
         {
             SaveDataRoot = Absolute(saveDataRoot);
-            RootDirectory = Path.Combine(SaveDataRoot, "Phinix", "ManagedExtensions");
+            RootDirectory = Path.Combine(SaveDataRoot, "Phinix", area);
             PackagesDirectory = Path.Combine(RootDirectory, "packages");
             InstalledRecordsDirectory = Path.Combine(RootDirectory, "state", "installed");
             DesiredStateDirectory = Path.Combine(RootDirectory, "state", "desired");

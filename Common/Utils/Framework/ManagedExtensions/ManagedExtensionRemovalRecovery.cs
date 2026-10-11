@@ -161,27 +161,38 @@ namespace Utils.Framework.ManagedExtensions
         }
         private static void Finish(ManagedExtensionPaths paths, Journal journal, string journalPath, CancellationToken token, Action<string> fault)
         {
-            string original = paths.GetPackageDirectory(journal.SourceId, journal.PackageId);
-            string work = Path.Combine(paths.TransactionsDirectory, "rm-" + journal.OperationId), quarantine = Path.Combine(work, "package");
-            string receipt = paths.GetInstalledRecordPath(journal.SourceId, journal.PackageId), state = paths.GetDesiredStatePath(journal.SourceId, journal.PackageId);
+            FinishOwned(paths,journal.SourceId,journal.PackageId,journal.OperationId,journal.ReceiptBytes,journal.StateBytes,journal.Receipt.Files,
+                journalPath,Serialize(journal),token,fault,null);
+        }
+        internal static void FinishOwned(ManagedExtensionPaths paths,string sourceId,string packageId,string operationId,
+            byte[] receiptBytes,byte[] stateBytes,List<ManagedExtensionFile> files,string journalPath,byte[] journalBytes,
+            CancellationToken token,Action<string> fault,Action complete)
+        {
+            string original = paths.GetPackageDirectory(sourceId, packageId);
+            string work = Path.Combine(paths.TransactionsDirectory, "rm-" + operationId), quarantine = Path.Combine(work, "package");
+            string receipt = paths.GetInstalledRecordPath(sourceId, packageId), state = paths.GetDesiredStatePath(sourceId, packageId);
             ManagedExtensionInventoryReader.NoLinks(original); ManagedExtensionInventoryReader.NoLinks(quarantine);
             bool hasOriginal = Directory.Exists(original), hasQuarantine = Directory.Exists(quarantine);
+            ManagedExtensionInventoryReader.NoLinks(work);
+            if(Directory.Exists(work) && Directory.EnumerateFileSystemEntries(work).Any(e=>e!=quarantine)) throw ManagedExtensionJson.Error("RemovalWorkDirectoryChanged");
+            ManagedExtensionInventoryReader.NoLinks(journalPath);
+            if(!ManagedExtensionInventoryReader.Bytes(journalPath,4*1024*1024,token).SequenceEqual(journalBytes)) throw ManagedExtensionJson.Error("RemovalJournalChanged");
             if (hasOriginal && hasQuarantine) throw ManagedExtensionJson.Error("RemovalDirectoryConflict");
             if (File.Exists(original) || File.Exists(quarantine) || File.Exists(work)) throw ManagedExtensionJson.Error("RemovalDirectoryInvalid");
-            ExactOrMissing(receipt, journal.ReceiptBytes, !hasOriginal && !hasQuarantine, token);
-            ExactOrMissing(state, journal.StateBytes, !hasOriginal && !hasQuarantine, token);
+            ExactOrMissing(receipt, receiptBytes, !hasOriginal && !hasQuarantine, token);
+            ExactOrMissing(state, stateBytes, !hasOriginal && !hasQuarantine, token);
             if (hasOriginal)
             {
                 // Fresh/replayed move is permitted only for the complete original inventory, never a subset.
-                ManagedExtensionInventoryReader.VerifyTree(original, journal.Receipt.Files, token);
+                ManagedExtensionInventoryReader.VerifyTree(original, files, token);
                 Directory.CreateDirectory(work); ManagedExtensionInventoryReader.NoLinks(work);
                 if (Directory.EnumerateFileSystemEntries(work).Any()) throw ManagedExtensionJson.Error("RemovalWorkDirectoryChanged");
                 Directory.Move(original, quarantine); fault?.Invoke("package-moved"); hasQuarantine = true;
             }
             if (hasQuarantine)
             {
-                VerifySubset(quarantine, journal.Receipt.Files, token);
-                foreach (var file in journal.Receipt.Files.OrderBy(f => f.Path, StringComparer.Ordinal))
+                VerifySubset(quarantine, files, token);
+                foreach (var file in files.OrderBy(f => f.Path, StringComparer.Ordinal))
                 {
                     token.ThrowIfCancellationRequested(); string path = Path.Combine(quarantine, file.Path);
                     ManagedExtensionInventoryReader.NoLinks(path);
@@ -190,18 +201,21 @@ namespace Utils.Framework.ManagedExtensions
                 }
                 // Non-recursive deletion preserves any newly inserted unknown files/directories.
                 var directories = new HashSet<string>(StringComparer.Ordinal);
-                foreach (var file in journal.Receipt.Files)
+                foreach (var file in files)
                 { string relative=Path.GetDirectoryName(file.Path); while(!string.IsNullOrEmpty(relative)) { directories.Add(Path.Combine(quarantine,relative)); relative=Path.GetDirectoryName(relative); } }
                 foreach (var dir in directories.OrderByDescending(p=>p.Length))
                 { ManagedExtensionInventoryReader.NoLinks(dir); if(Directory.Exists(dir)) Directory.Delete(dir, false); }
                 Directory.Delete(quarantine, false); fault?.Invoke("package-deleted");
             }
             if (Directory.Exists(work)) { ManagedExtensionInventoryReader.NoLinks(work); Directory.Delete(work, false); }
-            ExactOrMissing(receipt, journal.ReceiptBytes, true, token); if (File.Exists(receipt)) File.Delete(receipt); fault?.Invoke("receipt-deleted");
-            ExactOrMissing(state, journal.StateBytes, true, token); if (File.Exists(state)) File.Delete(state); fault?.Invoke("state-deleted");
+            ExactOrMissing(receipt, receiptBytes, true, token); if (File.Exists(receipt)) File.Delete(receipt); fault?.Invoke("receipt-deleted");
+            ExactOrMissing(state, stateBytes, true, token); if (File.Exists(state)) File.Delete(state); fault?.Invoke("state-deleted");
             // A changed journal is evidence, not permission to remove it.
             ManagedExtensionInventoryReader.NoLinks(journalPath);
-            if (!ManagedExtensionInventoryReader.Bytes(journalPath, 4 * 1024 * 1024, token).SequenceEqual(Serialize(journal))) throw ManagedExtensionJson.Error("RemovalJournalChanged");
+            if (!ManagedExtensionInventoryReader.Bytes(journalPath, 4 * 1024 * 1024, token).SequenceEqual(journalBytes)) throw ManagedExtensionJson.Error("RemovalJournalChanged");
+            complete?.Invoke();
+            ManagedExtensionInventoryReader.NoLinks(journalPath);
+            if(!ManagedExtensionInventoryReader.Bytes(journalPath,4*1024*1024,token).SequenceEqual(journalBytes)) throw ManagedExtensionJson.Error("RemovalJournalChanged");
             File.Delete(journalPath);
         }
         internal static void VerifySubset(string root, List<ManagedExtensionFile> files, CancellationToken token)

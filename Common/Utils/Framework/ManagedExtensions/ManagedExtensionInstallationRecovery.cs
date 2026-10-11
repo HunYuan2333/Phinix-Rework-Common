@@ -12,13 +12,12 @@ namespace Utils.Framework.ManagedExtensions
     internal static class ManagedExtensionInstallationRecovery
     {
         internal const int MaxJournalBytes=32*1024*1024;
-        private sealed class Item
+        internal sealed class Item
         {
             internal byte[] ReceiptBytes,StateBytes,ManifestBytes,OldReceiptBytes,OldStateBytes,OldManifestBytes;
-            internal ManagedExtensionInventoryReader.Receipt Receipt,OldReceipt;
-            internal ManagedExtensionPackageSnapshot Row,OldRow;
+            internal ManagedPackageStorageRecord Row,OldRow;
         }
-        private sealed class Journal
+        internal sealed class Journal
         { internal int Schema; internal string Operation,Phase; internal List<Item> Items; }
 
         internal static IReadOnlyList<string> Recover(ManagedExtensionPaths paths,Action<string,ManagedExtensionPackageSnapshot> audit,
@@ -63,16 +62,33 @@ namespace Utils.Framework.ManagedExtensions
             for(int i=0;i<rows.Count;i++)
             {
                 var row=rows[i]; var package=request.Packages[i];
-                var item=new Item {Row=row,ManifestBytes=package.ManifestBytes,ReceiptBytes=ReceiptBytes(row,package.ManifestBytes.Length),StateBytes=StateBytes(row)};
+                var item=new Item {Row=ManagedPackageStorageRecord.FromExtension(row,Files(row,package.ManifestBytes.Length)),ManifestBytes=package.ManifestBytes,ReceiptBytes=ReceiptBytes(row,package.ManifestBytes.Length),StateBytes=StateBytes(row)};
                 if(package.Replacement!=null)
                 {
-                    item.OldRow=package.Replacement;
+                    item.OldRow=ManagedPackageStorageRecord.FromExtension(package.Replacement,Files(package.Replacement,0));
                     item.OldReceiptBytes=ManagedExtensionInventoryReader.Bytes(paths.GetInstalledRecordPath(row.SourceId,row.PackageId),ManagedExtensionInventoryReader.MaxRecordBytes,token);
                     item.OldStateBytes=ManagedExtensionInventoryReader.Bytes(paths.GetDesiredStatePath(row.SourceId,row.PackageId),8192,token);
                     item.OldManifestBytes=ManagedExtensionInventoryReader.Bytes(Path.Combine(paths.GetPackageDirectory(row.SourceId,row.PackageId),"manifest.json"),ManagedExtensionManifestReader.MaxManifestBytes,token);
                 }
                 journal.Items.Add(item);
             }
+            InstallItems(paths,journal,request.Packages.Select(p=>(IReadOnlyDictionary<string,byte[]>)p.Content).ToList(),token,fault,audit,revalidate,beginWrite);
+        }
+        internal static void InstallData(ManagedExtensionPaths paths,ManagedPackageStorageRecord row,byte[] manifest,
+            IReadOnlyDictionary<string,byte[]> files,ManagedPackageStorageRecord replacement,CancellationToken token,Action<CancellationToken> revalidate)
+        {
+            var item=new Item {Row=row,ReceiptBytes=row.ReceiptBytes,StateBytes=row.StateBytes,ManifestBytes=manifest};
+            if(replacement!=null)
+            {
+                item.OldRow=replacement; item.OldReceiptBytes=replacement.ReceiptBytes; item.OldStateBytes=replacement.StateBytes;
+                item.OldManifestBytes=ManagedExtensionInventoryReader.Bytes(Path.Combine(paths.GetPackageDirectory(row.SourceId,row.PackageId),"manifest.json"),65536,token);
+            }
+            InstallItems(paths,new Journal {Schema=3,Operation=row.InstallationTransactionId,Phase="preparing",Items=new List<Item>{item}},
+                new[]{files},token,null,null,revalidate,null);
+        }
+        private static void InstallItems(ManagedExtensionPaths paths,Journal journal,IList<IReadOnlyDictionary<string,byte[]>> contents,
+            CancellationToken token,Action<string> fault,Action<string,ManagedExtensionPackageSnapshot> audit,Action<CancellationToken> revalidate,Action beginWrite)
+        {
             // Validate the exact durable format and byte limits before creating any work tree.
             journal=Parse(Serialize(journal));
             string path=JournalPath(paths,journal),work=Work(paths,journal),stage=Path.Combine(work,"stage");
@@ -84,23 +100,23 @@ namespace Utils.Framework.ManagedExtensions
             MakeDirectory(stage);
             for(int i=0;i<journal.Items.Count;i++)
             {
-                var item=journal.Items[i]; var package=request.Packages[i];
+                var item=journal.Items[i]; var content=contents[i];
                 string root=Staged(paths,journal,item); MakeDirectory(root);
-                foreach(var file in item.Receipt.Files)
+                foreach(var file in item.Row.Files)
                 {
                     token.ThrowIfCancellationRequested(); string destination=Path.Combine(root,file.Path); MakeDirectory(Path.GetDirectoryName(destination));
-                    WriteNew(destination,file.Path=="manifest.json"?package.ManifestBytes:package.Content[file.Path]); fault?.Invoke("file-written");
+                    WriteNew(destination,file.Path=="manifest.json"?item.ManifestBytes:content[file.Path]); fault?.Invoke("file-written");
                 }
-                ManagedExtensionInventoryReader.VerifyTree(root,item.Receipt.Files,token); Emit(audit,"InstallPackageStaged",item.Row); fault?.Invoke("package-staged");
+                ManagedExtensionInventoryReader.VerifyTree(root,item.Row.Files,token); Emit(audit,"InstallPackageStaged",item.Row); fault?.Invoke("package-staged");
             }
             VerifyWork(paths,journal,token);
-            foreach(var item in journal.Items) { EnsureBefore(paths,journal,item,token); ManagedExtensionInventoryReader.VerifyTree(Staged(paths,journal,item),item.Receipt.Files,token); }
+            foreach(var item in journal.Items) { EnsureBefore(paths,journal,item,token); ManagedExtensionInventoryReader.VerifyTree(Staged(paths,journal,item),item.Row.Files,token); }
             token.ThrowIfCancellationRequested();
             var committed=new Journal {Schema=journal.Schema,Operation=journal.Operation,Phase="committing",Items=journal.Items};
             string transition=Path.Combine(work,"transition.json"); WriteNew(transition,Serialize(committed)); fault?.Invoke("transition-written");
             Exact(path,Serialize(journal),MaxJournalBytes,token); Exact(transition,Serialize(committed),MaxJournalBytes,token);
             revalidate?.Invoke(token);
-            foreach(var item in journal.Items) { EnsureBefore(paths,journal,item,token); ManagedExtensionInventoryReader.VerifyTree(Staged(paths,journal,item),item.Receipt.Files,token); }
+            foreach(var item in journal.Items) { EnsureBefore(paths,journal,item,token); ManagedExtensionInventoryReader.VerifyTree(Staged(paths,journal,item),item.Row.Files,token); }
             token.ThrowIfCancellationRequested();
             File.Replace(transition,path,null); // Durable decision: subsequent cancellation cannot roll this batch back.
             foreach(var item in journal.Items) Emit(audit,"InstallCommitDecided",item.Row); fault?.Invoke("commit-decided");
@@ -108,6 +124,8 @@ namespace Utils.Framework.ManagedExtensions
         }
 
         internal static void EnsureNew(ManagedExtensionPaths paths,ManagedExtensionPackageSnapshot row)
+            => EnsureNew(paths,ManagedPackageStorageRecord.FromExtension(row,new ManagedExtensionFile[0]));
+        private static void EnsureNew(ManagedExtensionPaths paths,ManagedPackageStorageRecord row)
         {
             RequireAbsent(paths.GetPackageDirectory(row.SourceId,row.PackageId));
             RequireAbsent(paths.GetInstalledRecordPath(row.SourceId,row.PackageId));
@@ -119,7 +137,7 @@ namespace Utils.Framework.ManagedExtensions
             RequireAbsent(Backup(paths,journal,item));
             Exact(paths.GetInstalledRecordPath(item.Row.SourceId,item.Row.PackageId),item.OldReceiptBytes,ManagedExtensionInventoryReader.MaxRecordBytes,token);
             Exact(paths.GetDesiredStatePath(item.Row.SourceId,item.Row.PackageId),item.OldStateBytes,8192,token);
-            ManagedExtensionInventoryReader.VerifyTree(paths.GetPackageDirectory(item.Row.SourceId,item.Row.PackageId),item.OldReceipt.Files,token);
+            ManagedExtensionInventoryReader.VerifyTree(paths.GetPackageDirectory(item.Row.SourceId,item.Row.PackageId),item.OldRow.Files,token);
         }
         private static void RequireAbsent(string path)
         {
@@ -144,7 +162,7 @@ namespace Utils.Framework.ManagedExtensions
                 if(item.OldRow!=null) { VerifyReplacement(paths,journal,item,token); continue; }
                 ManagedExtensionInventoryReader.NoLinks(staged); ManagedExtensionInventoryReader.NoLinks(target);
                 if(File.Exists(staged) || File.Exists(target) || Directory.Exists(staged)==Directory.Exists(target)) throw Error("InstallDirectoryConflict");
-                ManagedExtensionInventoryReader.VerifyTree(Directory.Exists(staged)?staged:target,item.Receipt.Files,token);
+                ManagedExtensionInventoryReader.VerifyTree(Directory.Exists(staged)?staged:target,item.Row.Files,token);
                 OptionalExact(paths.GetInstalledRecordPath(item.Row.SourceId,item.Row.PackageId),item.ReceiptBytes,token);
                 OptionalExact(paths.GetDesiredStatePath(item.Row.SourceId,item.Row.PackageId),item.StateBytes,token);
             }
@@ -158,7 +176,7 @@ namespace Utils.Framework.ManagedExtensions
                     Directory.Move(target,Backup(paths,journal,item)); Emit(audit,"ReplacementOriginalMoved",item.Row); fault?.Invoke("replacement-original-moved");
                 }
                 if(Directory.Exists(staged))
-                { RequireAbsent(target); ManagedExtensionInventoryReader.VerifyTree(staged,item.Receipt.Files,token); Directory.Move(staged,target); Emit(audit,"InstallPackageMoved",item.Row); fault?.Invoke("package-moved"); }
+                { RequireAbsent(target); ManagedExtensionInventoryReader.VerifyTree(staged,item.Row.Files,token); Directory.Move(staged,target); Emit(audit,"InstallPackageMoved",item.Row); fault?.Invoke("package-moved"); }
                 if(item.OldRow==null) CommitRecord(Work(paths,journal),MetadataKey(journal,item,"receipt"),paths.GetInstalledRecordPath(item.Row.SourceId,item.Row.PackageId),item.ReceiptBytes,token,fault);
                 else ReplaceRecord(Work(paths,journal),MetadataKey(journal,item,"receipt"),paths.GetInstalledRecordPath(item.Row.SourceId,item.Row.PackageId),item.OldReceiptBytes,item.ReceiptBytes,token,fault);
                 Emit(audit,"InstallReceiptCommitted",item.Row); fault?.Invoke("receipt-committed");
@@ -168,13 +186,13 @@ namespace Utils.Framework.ManagedExtensions
             }
             foreach(var item in journal.Items)
             {
-                ManagedExtensionInventoryReader.VerifyTree(paths.GetPackageDirectory(item.Row.SourceId,item.Row.PackageId),item.Receipt.Files,token);
+                ManagedExtensionInventoryReader.VerifyTree(paths.GetPackageDirectory(item.Row.SourceId,item.Row.PackageId),item.Row.Files,token);
                 Exact(paths.GetInstalledRecordPath(item.Row.SourceId,item.Row.PackageId),item.ReceiptBytes,ManagedExtensionInventoryReader.MaxRecordBytes,token);
                 Exact(paths.GetDesiredStatePath(item.Row.SourceId,item.Row.PackageId),item.StateBytes,8192,token);
             }
             foreach(var item in journal.Items.Where(i=>i.OldRow!=null))
             {
-                DeleteOwnedTree(Backup(paths,journal,item),item.OldReceipt.Files,token,()=>fault?.Invoke("replacement-backup-file-deleted"));
+                DeleteOwnedTree(Backup(paths,journal,item),item.OldRow.Files,token,()=>fault?.Invoke("replacement-backup-file-deleted"));
                 Emit(audit,"ReplacementOriginalCleaned",item.Row);
             }
             string backups=Path.Combine(Work(paths,journal),"backup");
@@ -192,21 +210,21 @@ namespace Utils.Framework.ManagedExtensions
             bool s=Directory.Exists(staged),t=Directory.Exists(target),b=Directory.Exists(backup);
             if(s)
             {
-                ManagedExtensionInventoryReader.VerifyTree(staged,item.Receipt.Files,token);
+                ManagedExtensionInventoryReader.VerifyTree(staged,item.Row.Files,token);
                 if(t==b) throw Error("ReplacementDirectoryConflict");
-                ManagedExtensionInventoryReader.VerifyTree(b?backup:target,item.OldReceipt.Files,token);
+                ManagedExtensionInventoryReader.VerifyTree(b?backup:target,item.OldRow.Files,token);
                 Exact(paths.GetInstalledRecordPath(item.Row.SourceId,item.Row.PackageId),item.OldReceiptBytes,ManagedExtensionInventoryReader.MaxRecordBytes,token);
                 Exact(paths.GetDesiredStatePath(item.Row.SourceId,item.Row.PackageId),item.OldStateBytes,8192,token);
             }
             else
             {
                 if(!t) throw Error("ReplacementDirectoryConflict");
-                ManagedExtensionInventoryReader.VerifyTree(target,item.Receipt.Files,token);
+                ManagedExtensionInventoryReader.VerifyTree(target,item.Row.Files,token);
                 bool done=RecordIs(paths.GetInstalledRecordPath(item.Row.SourceId,item.Row.PackageId),item.ReceiptBytes,token) && RecordIs(paths.GetDesiredStatePath(item.Row.SourceId,item.Row.PackageId),item.StateBytes,token);
                 if(b)
                 {
-                    if(done) ManagedExtensionRemovalRecovery.VerifySubset(backup,item.OldReceipt.Files,token);
-                    else ManagedExtensionInventoryReader.VerifyTree(backup,item.OldReceipt.Files,token);
+                    if(done) ManagedExtensionRemovalRecovery.VerifySubset(backup,item.OldRow.Files,token);
+                    else ManagedExtensionInventoryReader.VerifyTree(backup,item.OldRow.Files,token);
                 }
                 else if(!done) throw Error("ReplacementBackupMissing");
                 EitherRecord(paths.GetInstalledRecordPath(item.Row.SourceId,item.Row.PackageId),item.OldReceiptBytes,item.ReceiptBytes,token);
@@ -253,17 +271,17 @@ namespace Utils.Framework.ManagedExtensions
         private static void Rollback(ManagedExtensionPaths paths,Journal journal,string journalPath,CancellationToken token)
         {
             VerifyWork(paths,journal,token); Exact(journalPath,Serialize(journal),MaxJournalBytes,token);
-            foreach(var item in journal.Items) { EnsureBefore(paths,journal,item,token); string root=Staged(paths,journal,item); if(Directory.Exists(root)) ManagedExtensionRemovalRecovery.VerifySubset(root,item.Receipt.Files,token); }
+            foreach(var item in journal.Items) { EnsureBefore(paths,journal,item,token); string root=Staged(paths,journal,item); if(Directory.Exists(root)) ManagedExtensionRemovalRecovery.VerifySubset(root,item.Row.Files,token); }
             foreach(var item in journal.Items)
             {
                 string root=Staged(paths,journal,item); if(!Directory.Exists(root)) continue;
-                foreach(var file in item.Receipt.Files)
+                foreach(var file in item.Row.Files)
                 {
                     token.ThrowIfCancellationRequested(); string path=Path.Combine(root,file.Path); ManagedExtensionInventoryReader.NoLinks(path);
                     if(File.Exists(path)) { ManagedExtensionRemovalRecovery.VerifyFile(path,file,token); File.Delete(path); }
                 }
                 var directories=new HashSet<string>(StringComparer.Ordinal);
-                foreach(var file in item.Receipt.Files)
+                foreach(var file in item.Row.Files)
                     for(string parent=Path.GetDirectoryName(file.Path);!string.IsNullOrEmpty(parent);parent=Path.GetDirectoryName(parent)) directories.Add(Path.Combine(root,parent));
                 foreach(string dir in directories.OrderByDescending(d=>d.Length)) { ManagedExtensionInventoryReader.NoLinks(dir); if(Directory.Exists(dir)) Directory.Delete(dir,false); }
                 Directory.Delete(root,false);
@@ -294,7 +312,7 @@ namespace Utils.Framework.ManagedExtensions
                         if(++staged>journal.Items.Count) throw Error("InstallWorkChanged");
                         ManagedExtensionInventoryReader.NoLinks(root); var item=journal.Items.SingleOrDefault(i=>WorkKey(journal,i)==Path.GetFileName(root));
                         if(item==null || !Directory.Exists(root)) throw Error("InstallWorkChanged");
-                        ManagedExtensionRemovalRecovery.VerifySubset(root,item.Receipt.Files,token);
+                        ManagedExtensionRemovalRecovery.VerifySubset(root,item.Row.Files,token);
                     }
                 }
                 else if(name=="backup" && Directory.Exists(entry) && journal.Phase=="committing")
@@ -306,7 +324,7 @@ namespace Utils.Framework.ManagedExtensions
                         ManagedExtensionInventoryReader.NoLinks(root);
                         var item=journal.Items.SingleOrDefault(i=>i.OldRow!=null && WorkKey(journal,i)==Path.GetFileName(root));
                         if(item==null || !Directory.Exists(root)) throw Error("InstallWorkChanged");
-                        ManagedExtensionRemovalRecovery.VerifySubset(root,item.OldReceipt.Files,token);
+                        ManagedExtensionRemovalRecovery.VerifySubset(root,item.OldRow.Files,token);
                     }
                 }
                 else { byte[] expected; if(!metadata.TryGetValue(name,out expected)) throw Error("InstallWorkChanged"); Exact(entry,expected,MaxJournalBytes,token); }
@@ -338,12 +356,12 @@ namespace Utils.Framework.ManagedExtensions
                 ValidateFilePath(paths.GetDesiredStatePath(item.Row.SourceId,item.Row.PackageId));
                 ValidateFilePath(Path.Combine(Work(paths,journal),MetadataKey(journal,item,"receipt")));
                 ValidateFilePath(Path.Combine(Work(paths,journal),MetadataKey(journal,item,"state")));
-                foreach(var file in item.Receipt.Files)
+                foreach(var file in item.Row.Files)
                 {
                     ValidateFilePath(Path.Combine(Staged(paths,journal,item),file.Path));
                     ValidateFilePath(Path.Combine(paths.GetPackageDirectory(item.Row.SourceId,item.Row.PackageId),file.Path));
                 }
-                if(item.OldReceipt!=null) foreach(var file in item.OldReceipt.Files)
+                if(item.OldRow!=null) foreach(var file in item.OldRow.Files)
                     ValidateFilePath(Path.Combine(Backup(paths,journal,item),file.Path));
             }
         }
@@ -359,9 +377,11 @@ namespace Utils.Framework.ManagedExtensions
         }
         private static string Staged(ManagedExtensionPaths paths,Journal j,Item i) { return Path.Combine(Work(paths,j),"stage",WorkKey(j,i)); }
         private static string Backup(ManagedExtensionPaths paths,Journal j,Item i) { return Path.Combine(Work(paths,j),"backup",WorkKey(j,i)); }
+        private static IEnumerable<ManagedExtensionFile> Files(ManagedExtensionPackageSnapshot row,int manifestLength)
+            => row.Manifest.Assemblies.Select(a=>a.File).Concat(row.Manifest.Resources).Concat(new[]{new ManagedExtensionFile("manifest.json",manifestLength,row.ManifestSha256)});
         private static byte[] ReceiptBytes(ManagedExtensionPackageSnapshot row,int manifestLength)
         {
-            var files=row.Manifest.Assemblies.Select(a=>a.File).Concat(row.Manifest.Resources).Concat(new[]{new ManagedExtensionFile("manifest.json",manifestLength,row.ManifestSha256)});
+            var files=Files(row,manifestLength);
             return SerializeReceipt(row,files);
         }
         private static byte[] SerializeReceipt(ManagedExtensionPackageSnapshot row,IEnumerable<ManagedExtensionFile> files)
@@ -379,11 +399,12 @@ namespace Utils.Framework.ManagedExtensions
         private static byte[] StateBytes(ManagedExtensionPackageSnapshot row)
         { return Encoding.UTF8.GetBytes("{\"schemaVersion\":1,\"sourceId\":\""+row.SourceId+"\",\"packageId\":\""+row.PackageId+"\",\"manifestSha256\":\""+row.ManifestSha256+"\",\"operationId\":\""+row.StateOperationId+"\",\"desiredState\":\"enabled\"}"); }
         private static byte[] Serialize(Journal j)
-        { return Encoding.UTF8.GetBytes("{\"schemaVersion\":"+j.Schema.ToString(System.Globalization.CultureInfo.InvariantCulture)+",\"kind\":\"installation\",\"operationId\":\""+j.Operation+"\",\"phase\":\""+j.Phase+"\",\"packages\":["+string.Join(",",j.Items.Select(i=>"{\"receiptBase64\":\""+Convert.ToBase64String(i.ReceiptBytes)+"\",\"stateBase64\":\""+Convert.ToBase64String(i.StateBytes)+"\",\"manifestBase64\":\""+Convert.ToBase64String(i.ManifestBytes)+"\""+(i.OldRow==null?"":",\"oldReceiptBase64\":\""+Convert.ToBase64String(i.OldReceiptBytes)+"\",\"oldStateBase64\":\""+Convert.ToBase64String(i.OldStateBytes)+"\",\"oldManifestBase64\":\""+Convert.ToBase64String(i.OldManifestBytes)+"\"")+"}"))+"]}"); }
+        { return Encoding.UTF8.GetBytes("{\"schemaVersion\":"+j.Schema.ToString(System.Globalization.CultureInfo.InvariantCulture)+",\"kind\":\""+(j.Schema==3?"data-installation":"installation")+"\",\"operationId\":\""+j.Operation+"\",\"phase\":\""+j.Phase+"\",\"packages\":["+string.Join(",",j.Items.Select(i=>"{\"receiptBase64\":\""+Convert.ToBase64String(i.ReceiptBytes)+"\",\"stateBase64\":\""+Convert.ToBase64String(i.StateBytes)+"\",\"manifestBase64\":\""+Convert.ToBase64String(i.ManifestBytes)+"\""+(i.OldRow==null?"":",\"oldReceiptBase64\":\""+Convert.ToBase64String(i.OldReceiptBytes)+"\",\"oldStateBase64\":\""+Convert.ToBase64String(i.OldStateBytes)+"\",\"oldManifestBase64\":\""+Convert.ToBase64String(i.OldManifestBytes)+"\"")+"}"))+"]}"); }
         private static Journal Parse(byte[] bytes)
         {
             var f=ManagedExtensionJson.Object(ManagedExtensionJson.Read(bytes,MaxJournalBytes),"schemaVersion","kind","operationId","phase","packages");
-            int schema=(int)ManagedExtensionJson.Integer(ManagedExtensionJson.Required(f,"schemaVersion"),1,2);
+            int schema=(int)ManagedExtensionJson.Integer(ManagedExtensionJson.Required(f,"schemaVersion"),1,3);
+            if(schema==3) return ParseData(bytes,f);
             if(ManagedExtensionJson.Text(ManagedExtensionJson.Required(f,"kind"),32)!="installation") throw Error("InstallJournalSchemaInvalid");
             var j=new Journal {Schema=schema,Operation=ManagedExtensionJson.Hex(ManagedExtensionJson.Required(f,"operationId"),32),Phase=ManagedExtensionJson.Text(ManagedExtensionJson.Required(f,"phase"),32),Items=new List<Item>()};
             if(j.Phase!="preparing" && j.Phase!="committing") throw Error("InstallJournalSchemaInvalid");
@@ -391,18 +412,19 @@ namespace Utils.Framework.ManagedExtensions
             {
                 var itemFields=ManagedExtensionJson.Object(node,"receiptBase64","stateBase64","manifestBase64","oldReceiptBase64","oldStateBase64","oldManifestBase64");
                 var item=new Item {ReceiptBytes=Decode(itemFields,"receiptBase64",ManagedExtensionInventoryReader.MaxRecordBytes),StateBytes=Decode(itemFields,"stateBase64",8192),ManifestBytes=Decode(itemFields,"manifestBase64",ManagedExtensionManifestReader.MaxManifestBytes)};
-                var r=ManagedExtensionInventoryReader.ReadReceipt(item.ReceiptBytes); item.Receipt=r;
+                var r=ManagedExtensionInventoryReader.ReadReceipt(item.ReceiptBytes);
                 var manifest=ManagedExtensionManifestReader.Read(item.ManifestBytes);
                 if(r.TransactionId!=j.Operation || r.ManifestHash!=ManagedExtensionPaths.Hash(item.ManifestBytes) || r.PackageId!=manifest.PackageId || r.Version!=manifest.Version.ToString()) throw Error("InstallJournalIdentityMismatch");
-                item.Row=new ManagedExtensionPackageSnapshot(ManagedExtensionPaths.PackageKey(r.SourceId,r.PackageId),r.SourceId,r.IdentityHash,r.PackageId,r.Version,r.ManifestHash,r.SnapshotId,r.CatalogHash,r.ArtifactHash,r.TransactionId,j.Operation,manifest,ManagedExtensionDesiredState.Enabled,ManagedExtensionContentState.ContentVerified,null);
+                var row=new ManagedExtensionPackageSnapshot(ManagedExtensionPaths.PackageKey(r.SourceId,r.PackageId),r.SourceId,r.IdentityHash,r.PackageId,r.Version,r.ManifestHash,r.SnapshotId,r.CatalogHash,r.ArtifactHash,r.TransactionId,j.Operation,manifest,ManagedExtensionDesiredState.Enabled,ManagedExtensionContentState.ContentVerified,null);
                 var expected=manifest.Assemblies.Select(a=>a.File).Concat(manifest.Resources).Concat(new[]{new ManagedExtensionFile("manifest.json",item.ManifestBytes.Length,r.ManifestHash)}).ToList();
-                if(r.Files.Count!=expected.Count || expected.Any(e=>!r.Files.Any(v=>v.Path==e.Path && v.Length==e.Length && v.Sha256==e.Sha256)) || !StateBytes(item.Row).SequenceEqual(item.StateBytes)) throw Error("InstallJournalFilesMismatch");
+                if(r.Files.Count!=expected.Count || expected.Any(e=>!r.Files.Any(v=>v.Path==e.Path && v.Length==e.Length && v.Sha256==e.Sha256)) || !StateBytes(row).SequenceEqual(item.StateBytes)) throw Error("InstallJournalFilesMismatch");
+                item.Row=ManagedPackageStorageRecord.FromExtension(row,r.Files);
                 if(itemFields.ContainsKey("oldReceiptBase64")) ReadOld(item,itemFields);
                 j.Items.Add(item);
             }
-            if(j.Items.Count==0 || j.Items.Select(i=>i.Row.RecordKey).Distinct().Count()!=j.Items.Count || j.Items.Sum(i=>i.Receipt.Files.Sum(v=>v.Length))>ManagedExtensionManifestReader.MaxExpandedBytes) throw Error("InstallJournalLimit");
+            if(j.Items.Count==0 || j.Items.Select(i=>i.Row.RecordKey).Distinct().Count()!=j.Items.Count || j.Items.Sum(i=>i.Row.Files.Sum(v=>v.Length))>ManagedExtensionManifestReader.MaxExpandedBytes) throw Error("InstallJournalLimit");
             var first=j.Items[0].Row;
-            if(j.Items.Any(i=>i.Row.SourceId!=first.SourceId || i.Row.RepositoryIdentitySha256!=first.RepositoryIdentitySha256 || i.Row.CatalogSnapshotId!=first.CatalogSnapshotId || i.Row.CatalogSha256!=first.CatalogSha256)) throw Error("InstallJournalIdentityMismatch");
+            if(j.Items.Any(i=>i.Row.SourceId!=first.SourceId || i.Row.Extension.RepositoryIdentitySha256!=first.Extension.RepositoryIdentitySha256 || i.Row.Extension.CatalogSnapshotId!=first.Extension.CatalogSnapshotId || i.Row.Extension.CatalogSha256!=first.Extension.CatalogSha256)) throw Error("InstallJournalIdentityMismatch");
             if(!Serialize(j).SequenceEqual(bytes)) throw Error("InstallJournalNotCanonical"); return j;
         }
         private static void ReadOld(Item item,Dictionary<string,XElement> fields)
@@ -410,18 +432,42 @@ namespace Utils.Framework.ManagedExtensions
             item.OldReceiptBytes=Decode(fields,"oldReceiptBase64",ManagedExtensionInventoryReader.MaxRecordBytes);
             item.OldStateBytes=Decode(fields,"oldStateBase64",8192);
             item.OldManifestBytes=Decode(fields,"oldManifestBase64",ManagedExtensionManifestReader.MaxManifestBytes);
-            var old=ManagedExtensionInventoryReader.ReadReceipt(item.OldReceiptBytes); item.OldReceipt=old;
+            var old=ManagedExtensionInventoryReader.ReadReceipt(item.OldReceiptBytes);
             var manifest=ManagedExtensionManifestReader.Read(item.OldManifestBytes);
-            if(old.SourceId!=item.Row.SourceId || old.IdentityHash!=item.Row.RepositoryIdentitySha256 || old.PackageId!=item.Row.PackageId ||
+            if(old.SourceId!=item.Row.SourceId || old.IdentityHash!=item.Row.Extension.RepositoryIdentitySha256 || old.PackageId!=item.Row.PackageId ||
                 old.ManifestHash!=ManagedExtensionPaths.Hash(item.OldManifestBytes) || manifest.PackageId!=old.PackageId || manifest.Version.ToString()!=old.Version ||
-                (item.Row.IsLocalDevelopment?manifest.Version.CompareTo(item.Row.Manifest.Version)>0 || old.ArtifactHash==item.Row.ArtifactSha256:
-                    manifest.Version.CompareTo(item.Row.Manifest.Version)>=0)) throw Error("ManagedReplacementIdentityInvalid");
+                (item.Row.Extension.IsLocalDevelopment?manifest.Version.CompareTo(item.Row.Extension.Manifest.Version)>0 || old.ArtifactHash==item.Row.ArtifactSha256:
+                    manifest.Version.CompareTo(item.Row.Extension.Manifest.Version)>=0)) throw Error("ManagedReplacementIdentityInvalid");
             var state=ManagedExtensionJson.Object(ManagedExtensionJson.Read(item.OldStateBytes,8192),"schemaVersion","sourceId","packageId","manifestSha256","operationId","desiredState");
             string operation=ManagedExtensionJson.Hex(ManagedExtensionJson.Required(state,"operationId"),32);
-            item.OldRow=new ManagedExtensionPackageSnapshot(item.Row.RecordKey,old.SourceId,old.IdentityHash,old.PackageId,old.Version,old.ManifestHash,old.SnapshotId,old.CatalogHash,
+            var oldRow=new ManagedExtensionPackageSnapshot(item.Row.RecordKey,old.SourceId,old.IdentityHash,old.PackageId,old.Version,old.ManifestHash,old.SnapshotId,old.CatalogHash,
                 old.ArtifactHash,old.TransactionId,operation,manifest,ManagedExtensionDesiredState.Enabled,ManagedExtensionContentState.ContentVerified,null);
             var expected=manifest.Assemblies.Select(a=>a.File).Concat(manifest.Resources).Concat(new[]{new ManagedExtensionFile("manifest.json",item.OldManifestBytes.Length,old.ManifestHash)}).ToList();
-            if(!StateBytes(item.OldRow).SequenceEqual(item.OldStateBytes) || old.Files.Count!=expected.Count || expected.Any(e=>!old.Files.Any(v=>v.Path==e.Path && v.Length==e.Length && v.Sha256==e.Sha256))) throw Error("ReplacementJournalFilesMismatch");
+            if(!StateBytes(oldRow).SequenceEqual(item.OldStateBytes) || old.Files.Count!=expected.Count || expected.Any(e=>!old.Files.Any(v=>v.Path==e.Path && v.Length==e.Length && v.Sha256==e.Sha256))) throw Error("ReplacementJournalFilesMismatch");
+            item.OldRow=ManagedPackageStorageRecord.FromExtension(oldRow,old.Files);
+        }
+
+        private static Journal ParseData(byte[] bytes,Dictionary<string,XElement> f)
+        {
+            if(ManagedExtensionJson.Text(ManagedExtensionJson.Required(f,"kind"),32)!="data-installation") throw Error("InstallJournalSchemaInvalid");
+            var j=new Journal {Schema=3,Operation=ManagedExtensionJson.Hex(ManagedExtensionJson.Required(f,"operationId"),32),Phase=ManagedExtensionJson.Text(ManagedExtensionJson.Required(f,"phase"),32),Items=new List<Item>()};
+            if(j.Phase!="preparing" && j.Phase!="committing") throw Error("InstallJournalSchemaInvalid");
+            foreach(var node in ManagedExtensionJson.Array(ManagedExtensionJson.Required(f,"packages"),1))
+            {
+                var fields=ManagedExtensionJson.Object(node,"receiptBase64","stateBase64","manifestBase64","oldReceiptBase64","oldStateBase64","oldManifestBase64");
+                var item=new Item {ReceiptBytes=Decode(fields,"receiptBase64",65536),StateBytes=Decode(fields,"stateBase64",8192),ManifestBytes=Decode(fields,"manifestBase64",65536)};
+                item.Row=ManagedPackageStorageRecord.Read(item.ReceiptBytes,item.StateBytes,item.ManifestBytes);
+                if(item.Row.InstallationTransactionId!=j.Operation) throw Error("InstallJournalIdentityMismatch");
+                if(fields.ContainsKey("oldReceiptBase64"))
+                {
+                    item.OldReceiptBytes=Decode(fields,"oldReceiptBase64",65536); item.OldStateBytes=Decode(fields,"oldStateBase64",8192); item.OldManifestBytes=Decode(fields,"oldManifestBase64",65536);
+                    item.OldRow=ManagedPackageStorageRecord.Read(item.OldReceiptBytes,item.OldStateBytes,item.OldManifestBytes);
+                    if(item.OldRow.RecordKey!=item.Row.RecordKey || ManagedExtensionVersion.Parse(item.OldRow.Version).CompareTo(ManagedExtensionVersion.Parse(item.Row.Version))>0 || item.OldRow.ArtifactSha256==item.Row.ArtifactSha256) throw Error("ManagedReplacementIdentityInvalid");
+                }
+                j.Items.Add(item);
+            }
+            if(j.Items.Count!=1 || !Serialize(j).SequenceEqual(bytes)) throw Error("InstallJournalNotCanonical");
+            return j;
         }
         private static byte[] Decode(Dictionary<string,XElement> f,string key,int maximum)
         {
@@ -429,7 +475,7 @@ namespace Utils.Framework.ManagedExtensions
             catch(FormatException ex) { throw new ManagedExtensionValidationException("InstallJournalInvalid",ex); }
         }
         private static ManagedExtensionValidationException Error(string code) { return ManagedExtensionJson.Error(code); }
-        private static void Emit(Action<string,ManagedExtensionPackageSnapshot> audit,string code,ManagedExtensionPackageSnapshot row) { try { audit?.Invoke(code,row); } catch { } }
+        private static void Emit(Action<string,ManagedExtensionPackageSnapshot> audit,string code,ManagedPackageStorageRecord row) { try { audit?.Invoke(code,row?.Extension); } catch { } }
         private static void Detail(Action<Exception> detail,Exception ex) { try { detail?.Invoke(ex); } catch { } }
     }
 }

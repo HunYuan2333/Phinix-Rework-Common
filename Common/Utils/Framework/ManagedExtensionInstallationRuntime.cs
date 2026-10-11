@@ -15,6 +15,7 @@ namespace Utils.Framework
         public ManagedExtensionInstallResult Install(ManagedExtensionInstallRequest request,IEnumerable<string> disabledModules,CancellationToken token)
         {
             if(request==null) throw new ArgumentNullException(nameof(request));
+            lock(ManagedPackageMutation.Gate)
             lock(sync)
             {
                 string operation=Guid.NewGuid().ToString("N");
@@ -111,6 +112,7 @@ namespace Utils.Framework
             for(int i=0;i<incoming.Count;i++)
             {
                 token.ThrowIfCancellationRequested(); var row=incoming[i]; var package=request.Packages[i];
+                Themes.ManagedThemePackageStore.CheckIdentity(paths.SaveDataRoot,row.PackageId);
                 if(package.Replacement==null)
                 {
                     if(inventory.Packages.Any(p=>p.PackageId==row.PackageId)) throw ManagedExtensionJson.Error("ManagedInstallPackageConflict");
