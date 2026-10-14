@@ -87,6 +87,11 @@ namespace Utils.Framework.ManagedExtensions
     /// <summary>Pure preflight: no filesystem mutation, resolver installation, assembly loading or module construction.</summary>
     public static class ManagedExtensionCandidatePlanner
     {
+        internal static bool IsHostCompatible(ManagedExtensionManifest manifest, ManagedExtensionHostFacts host)
+        {
+            var c = manifest.Compatibility;
+            return c.RimWorldVersions.Contains(host.GameVersion) && c.PhinixRange.Contains(host.PhinixVersion) && c.AbstractionsRange.Contains(host.AbstractionsVersion);
+        }
         public static ReadOnlyCollection<ManagedExtensionCandidateResult> Plan(ManagedExtensionInventorySnapshot inventory,
             IReadOnlyDictionary<string, ManagedExtensionInspectedPayload> payloads, ManagedExtensionHostFacts host, string startupId, CancellationToken token)
         {
@@ -111,8 +116,7 @@ namespace Utils.Framework.ManagedExtensions
                 if (code == null && !ReferenceEquals(payload.Manifest, row.Manifest)) code = "CandidateManifestMismatch";
                 if (code == null)
                 {
-                    var c = row.Manifest.Compatibility;
-                    if (!c.RimWorldVersions.Contains(host.GameVersion) || !c.PhinixRange.Contains(host.PhinixVersion) || !c.AbstractionsRange.Contains(host.AbstractionsVersion)) code = "CandidateHostIncompatible";
+                    if (!IsHostCompatible(row.Manifest, host)) code = "CandidateHostIncompatible";
                     else if (row.Manifest.ExternalMods.Any(m => !host.ActiveModIds.Contains(m.PackageId, StringComparer.OrdinalIgnoreCase))) code = "CandidateExternalModMissing";
                 }
                 codes.Add(row, code); if (code == null) inputs.Add(row, payload);

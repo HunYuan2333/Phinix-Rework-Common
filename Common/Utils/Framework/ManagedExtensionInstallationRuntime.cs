@@ -144,7 +144,13 @@ namespace Utils.Framework
             }
             var combined=inventory.Packages.Where(p=>!replacements.Contains(p.RecordKey)).Concat(incoming).ToList();
             // Upgrades must not break existing consumers, including their exact CLR references.
-            ValidateCandidates(combined,payloads,disabled,combined.Where(p=>p.DesiredState==ManagedExtensionDesiredState.Enabled).Select(p=>p.RecordKey),token);
+            // Host upgrades may have already rejected unrelated installed packages. Keep
+            // them in the graph (so they cannot satisfy dependencies), but do not let
+            // their existing incompatibility prevent independent packages being repaired.
+            // Incoming packages and all host-compatible existing consumers remain required.
+            var incomingKeys=new HashSet<string>(incoming.Select(p=>p.RecordKey),StringComparer.Ordinal);
+            ValidateCandidates(combined,payloads,disabled,combined.Where(p=>p.DesiredState==ManagedExtensionDesiredState.Enabled &&
+                (incomingKeys.Contains(p.RecordKey) || ManagedExtensionCandidatePlanner.IsHostCompatible(p.Manifest,startupHost))).Select(p=>p.RecordKey),token);
             // Startup eagerly loads dependency-first; reject CLR cycles before accepting new packages.
             var remaining=payloads.Values.SelectMany(p=>p.Assemblies).ToDictionary(a=>a.Metadata.Identity.FullName,StringComparer.Ordinal);
             while(remaining.Count!=0)

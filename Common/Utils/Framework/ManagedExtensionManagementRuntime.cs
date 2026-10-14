@@ -170,7 +170,11 @@ namespace Utils.Framework
             var planned=ManagedExtensionCandidatePlanner.Plan(new ManagedExtensionInventorySnapshot(rows,new string[0]),payloads,facts,startupId,token);
             var targetKeys=new HashSet<string>(targets,StringComparer.Ordinal);
             foreach(var result in planned.Where(p=>targetKeys.Contains(p.Package.RecordKey)))
-                if(result.DiagnosticCode!=null) throw new ManagedExtensionValidationException(result.DiagnosticCode) {ReferenceFailure=result.ReferenceFailure};
+                if(result.DiagnosticCode!=null)
+                {
+                    Emit("management-preflight",result.DiagnosticCode,result.Package,reference:result.ReferenceFailure);
+                    throw new ManagedExtensionValidationException(result.DiagnosticCode) {ReferenceFailure=result.ReferenceFailure};
+                }
             var codes=ManagedExtensionModuleGate.Check(facts,planned.Where(p=>p.DiagnosticCode==null).Select(p=>p.Package),disabled,token);
             // Propagate a rejected module provider to packages depending on it.
             bool changed;
@@ -182,7 +186,15 @@ namespace Utils.Framework
                         p.Package.Manifest.Modules.Any(m=>m.DependsOn.Any(id=>other.Package.Manifest.Modules.Any(n=>n.Id==id))))))
                     { codes[p.Package.RecordKey]="ManagedDependencyRejected"; changed=true; }
             } while(changed);
-            foreach(string key in targetKeys) { string code; if(codes.TryGetValue(key,out code)) throw ManagedExtensionJson.Error(code); }
+            foreach(string key in targetKeys)
+            {
+                string code;
+                if(codes.TryGetValue(key,out code))
+                {
+                    Emit("management-preflight",code,rows.Single(p=>p.RecordKey==key));
+                    throw ManagedExtensionJson.Error(code);
+                }
+            }
         }
         private static ManagedExtensionPackageSnapshot CopyState(ManagedExtensionPackageSnapshot row, ManagedExtensionDesiredState desired, string operation)
         { return new ManagedExtensionPackageSnapshot(row.RecordKey,row.SourceId,row.RepositoryIdentitySha256,row.PackageId,row.Version,row.ManifestSha256,row.CatalogSnapshotId,
