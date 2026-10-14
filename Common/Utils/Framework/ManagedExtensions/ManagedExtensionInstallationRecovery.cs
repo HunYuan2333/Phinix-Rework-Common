@@ -378,7 +378,7 @@ namespace Utils.Framework.ManagedExtensions
         private static string Staged(ManagedExtensionPaths paths,Journal j,Item i) { return Path.Combine(Work(paths,j),"stage",WorkKey(j,i)); }
         private static string Backup(ManagedExtensionPaths paths,Journal j,Item i) { return Path.Combine(Work(paths,j),"backup",WorkKey(j,i)); }
         private static IEnumerable<ManagedExtensionFile> Files(ManagedExtensionPackageSnapshot row,int manifestLength)
-            => row.Manifest.Assemblies.Select(a=>a.File).Concat(row.Manifest.Resources).Concat(new[]{new ManagedExtensionFile("manifest.json",manifestLength,row.ManifestSha256)});
+            => row.Manifest.AllFiles.Concat(new[]{new ManagedExtensionFile("manifest.json",manifestLength,row.ManifestSha256)});
         private static byte[] ReceiptBytes(ManagedExtensionPackageSnapshot row,int manifestLength)
         {
             var files=Files(row,manifestLength);
@@ -416,7 +416,7 @@ namespace Utils.Framework.ManagedExtensions
                 var manifest=ManagedExtensionManifestReader.Read(item.ManifestBytes);
                 if(r.TransactionId!=j.Operation || r.ManifestHash!=ManagedExtensionPaths.Hash(item.ManifestBytes) || r.PackageId!=manifest.PackageId || r.Version!=manifest.Version.ToString()) throw Error("InstallJournalIdentityMismatch");
                 var row=new ManagedExtensionPackageSnapshot(ManagedExtensionPaths.PackageKey(r.SourceId,r.PackageId),r.SourceId,r.IdentityHash,r.PackageId,r.Version,r.ManifestHash,r.SnapshotId,r.CatalogHash,r.ArtifactHash,r.TransactionId,j.Operation,manifest,ManagedExtensionDesiredState.Enabled,ManagedExtensionContentState.ContentVerified,null);
-                var expected=manifest.Assemblies.Select(a=>a.File).Concat(manifest.Resources).Concat(new[]{new ManagedExtensionFile("manifest.json",item.ManifestBytes.Length,r.ManifestHash)}).ToList();
+                var expected=manifest.AllFiles.Concat(new[]{new ManagedExtensionFile("manifest.json",item.ManifestBytes.Length,r.ManifestHash)}).ToList();
                 if(r.Files.Count!=expected.Count || expected.Any(e=>!r.Files.Any(v=>v.Path==e.Path && v.Length==e.Length && v.Sha256==e.Sha256)) || !StateBytes(row).SequenceEqual(item.StateBytes)) throw Error("InstallJournalFilesMismatch");
                 item.Row=ManagedPackageStorageRecord.FromExtension(row,r.Files);
                 if(itemFields.ContainsKey("oldReceiptBase64")) ReadOld(item,itemFields);
@@ -442,7 +442,7 @@ namespace Utils.Framework.ManagedExtensions
             string operation=ManagedExtensionJson.Hex(ManagedExtensionJson.Required(state,"operationId"),32);
             var oldRow=new ManagedExtensionPackageSnapshot(item.Row.RecordKey,old.SourceId,old.IdentityHash,old.PackageId,old.Version,old.ManifestHash,old.SnapshotId,old.CatalogHash,
                 old.ArtifactHash,old.TransactionId,operation,manifest,ManagedExtensionDesiredState.Enabled,ManagedExtensionContentState.ContentVerified,null);
-            var expected=manifest.Assemblies.Select(a=>a.File).Concat(manifest.Resources).Concat(new[]{new ManagedExtensionFile("manifest.json",item.OldManifestBytes.Length,old.ManifestHash)}).ToList();
+            var expected=manifest.AllFiles.Concat(new[]{new ManagedExtensionFile("manifest.json",item.OldManifestBytes.Length,old.ManifestHash)}).ToList();
             if(!StateBytes(oldRow).SequenceEqual(item.OldStateBytes) || old.Files.Count!=expected.Count || expected.Any(e=>!old.Files.Any(v=>v.Path==e.Path && v.Length==e.Length && v.Sha256==e.Sha256))) throw Error("ReplacementJournalFilesMismatch");
             item.OldRow=ManagedPackageStorageRecord.FromExtension(oldRow,old.Files);
         }

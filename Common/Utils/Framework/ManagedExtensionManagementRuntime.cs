@@ -17,7 +17,7 @@ namespace Utils.Framework
             lock(sync)
             {
                 token.ThrowIfCancellationRequested();
-                var inventory=ManagedExtensionInventoryReader.Read(paths,token);
+                var inventory=ManagedExtensionInventoryReader.Read(paths,token,startupHost?.GameVersion);
                 string global=ManagementGate(inventory,token);
                 var disabled=new HashSet<string>(disabledModules??new string[0],StringComparer.OrdinalIgnoreCase);
                 var rows=inventory.Packages.Select(row=>
@@ -45,7 +45,7 @@ namespace Utils.Framework
                 {
                     token.ThrowIfCancellationRequested();
                     if(desired==ManagedExtensionDesiredState.Unknown) throw ManagedExtensionJson.Error("InvalidDesiredState");
-                    var inventory=ManagedExtensionInventoryReader.Read(paths,token);
+                    var inventory=ManagedExtensionInventoryReader.Read(paths,token,startupHost?.GameVersion);
                     string code=ManagementGate(inventory,token);
                     if(code!=null) throw ManagedExtensionJson.Error(code);
                     row=inventory.Packages.SingleOrDefault(p=>p.RecordKey!=null && p.RecordKey==expected.RecordKey);
@@ -143,17 +143,17 @@ namespace Utils.Framework
             foreach(var row in rows.Where(p=>p.DesiredState==ManagedExtensionDesiredState.Enabled && OwnershipGate(p)==null))
             {
                 token.ThrowIfCancellationRequested();
-                long size=row.Manifest.Assemblies.Sum(a=>a.File.Length);
+                long size=row.Manifest.AllFiles.Sum(f=>f.Length);
                 if(frozen+size>ManagedExtensionManifestReader.MaxExpandedBytes) throw ManagedExtensionJson.Error("ManagedStartupMemoryLimit");
                 var bytes=new Dictionary<string,byte[]>();
                 try
                 {
-                    foreach(var asm in row.Manifest.Assemblies)
+                    foreach(var asm in row.Manifest.Variants.Count==0?row.Manifest.Assemblies.AsEnumerable():row.Manifest.Variants.SelectMany(v=>v.Assemblies))
                     {
                         string file=Path.Combine(paths.GetPackageDirectory(row.SourceId,row.PackageId),asm.File.Path);
                         ManagedExtensionInventoryReader.NoLinks(file); bytes.Add(asm.File.Path,ManagedExtensionInventoryReader.Bytes(file,(int)ManagedExtensionManifestReader.MaxFileBytes,token));
                     }
-                    payloads[row.RecordKey]=ManagedExtensionPayloadInspector.Inspect(row.Manifest,bytes,token); frozen+=size;
+                    payloads[row.RecordKey]=ManagedExtensionPayloadInspector.InspectAll(row.Manifest,bytes,token); frozen+=size;
                 }
                 catch(ManagedExtensionValidationException) { if(row.RecordKey==target.RecordKey) throw; }
                 catch(IOException) { if(row.RecordKey==target.RecordKey) throw; }

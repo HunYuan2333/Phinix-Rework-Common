@@ -109,7 +109,7 @@ namespace Utils.Framework.ManagedExtensions
             internal List<ManagedExtensionFile> Files;
         }
 
-        public static ManagedExtensionInventorySnapshot Read(ManagedExtensionPaths paths, CancellationToken cancellationToken)
+        public static ManagedExtensionInventorySnapshot Read(ManagedExtensionPaths paths, CancellationToken cancellationToken, string gameVersion = null)
         {
             if (paths == null) throw new ArgumentNullException(nameof(paths));
             cancellationToken.ThrowIfCancellationRequested();
@@ -131,7 +131,7 @@ namespace Utils.Framework.ManagedExtensions
                 foreach (string record in records.OrderBy(Path.GetFileName, StringComparer.Ordinal))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    packages.Add(ReadPackage(paths, record, cancellationToken));
+                    packages.Add(ReadPackage(paths, record, cancellationToken, gameVersion));
                 }
             }
             catch (ManagedExtensionValidationException ex) { diagnostics.Add(ex.Code); }
@@ -140,7 +140,7 @@ namespace Utils.Framework.ManagedExtensions
             return new ManagedExtensionInventorySnapshot(packages, diagnostics);
         }
 
-        private static ManagedExtensionPackageSnapshot ReadPackage(ManagedExtensionPaths paths, string record, CancellationToken token)
+        private static ManagedExtensionPackageSnapshot ReadPackage(ManagedExtensionPaths paths, string record, CancellationToken token, string gameVersion)
         {
             Receipt receipt = null;
             ManagedExtensionManifest manifest = null;
@@ -163,9 +163,10 @@ namespace Utils.Framework.ManagedExtensions
                 byte[] manifestBytes = Bytes(manifestPath, ManagedExtensionManifestReader.MaxManifestBytes, token);
                 if (ManagedExtensionPaths.Hash(manifestBytes) != receipt.ManifestHash) throw ManagedExtensionJson.Error("ManifestDigestMismatch");
                 manifest = ManagedExtensionManifestReader.Read(manifestBytes);
+                if(gameVersion != null) manifest=manifest.ForGame(gameVersion);
                 if (manifest.PackageId != receipt.PackageId || manifest.Version.ToString() != receipt.Version) throw ManagedExtensionJson.Error("ManifestIdentityMismatch");
 
-                var expected = manifest.Assemblies.Select(a => a.File).Concat(manifest.Resources).ToList();
+                var expected = manifest.AllFiles.ToList();
                 expected.Add(new ManagedExtensionFile(ManagedExtensionManifest.FileName, manifestBytes.Length, receipt.ManifestHash));
                 if (expected.Count != receipt.Files.Count || expected.Any(f => !receipt.Files.Any(r =>
                     r.Path == f.Path && r.Length == f.Length && r.Sha256 == f.Sha256))) throw ManagedExtensionJson.Error("ReceiptFilesMismatch");

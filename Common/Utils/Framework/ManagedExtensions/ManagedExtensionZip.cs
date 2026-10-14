@@ -8,7 +8,7 @@ using System.Threading;
 
 namespace Utils.Framework.ManagedExtensions
 {
-    public sealed class ManagedExtensionZip
+    public sealed partial class ManagedExtensionZip
     {
         public const int MaxPackageBytes=128*1024*1024;
         private readonly byte[] manifestBytes;
@@ -17,8 +17,8 @@ namespace Utils.Framework.ManagedExtensions
         {
             manifestBytes=manifest; content=files; Sha256=digest; Inspected=inspected; Localization=localization;
             Manifest=inspected.Manifest;
-            Files=Manifest.Assemblies.Select(a=>a.File).Concat(Manifest.Resources)
-                .Concat(new[]{new ManagedExtensionFile(ManagedExtensionManifest.FileName,manifest.Length,ManagedExtensionPaths.Hash(manifest))})
+            Files=Manifest.AllFiles
+                .Concat(new[]{new ManagedExtensionFile(ManagedExtensionManifest.FileName,manifest.Length,ManagedExtensionDigest.Hash(manifest))})
                 .OrderBy(f=>f.Path,StringComparer.Ordinal).ToList().AsReadOnly();
         }
         public ManagedExtensionManifest Manifest { get; }
@@ -27,13 +27,14 @@ namespace Utils.Framework.ManagedExtensions
         public string Sha256 { get; }
         public ReadOnlyCollection<ManagedExtensionFile> Files { get; }
         public byte[] CopyManifestBytes() => (byte[])manifestBytes.Clone();
-        public ManagedExtensionInstallPackage LocalInstallation(ManagedExtensionPackageSnapshot replacement=null)
-            => ManagedExtensionInstallPackage.LocalDevelopment(Sha256,manifestBytes,content,replacement);
-        public ManagedExtensionInstallPackage RepositoryInstallation(string source,string identity,string snapshot,string catalog,ManagedExtensionPackageSnapshot replacement=null)
-            => new ManagedExtensionInstallPackage(source,identity,snapshot,catalog,Sha256,manifestBytes,content,replacement);
-
+        public byte[] CopyFile(string path)
+        {
+            byte[] bytes;
+            if(!content.TryGetValue(path,out bytes))throw ManagedExtensionJson.Error("ManagedFilesMismatch");
+            return (byte[])bytes.Clone();
+        }
         // Remote downloads, local imports and offline preflight share this bounded static inspector.
-        public static ManagedExtensionZip Read(Stream input,CancellationToken token,long? expectedLength=null,string expectedDigest=null,Action<byte[]> verifyManifest=null)
+        public static ManagedExtensionZip Read(Stream input,CancellationToken token,long? expectedLength=null,string expectedDigest=null,Action<byte[]> verifyManifest=null,string gameVersion=null)
         {
             if(input==null || !input.CanRead) throw new ArgumentException("A readable ZIP stream is required.",nameof(input));
             byte[] bytes;
@@ -50,7 +51,7 @@ namespace Utils.Framework.ManagedExtensions
             }
             token.ThrowIfCancellationRequested();
             if(expectedLength.HasValue && expectedLength.Value!=bytes.LongLength) throw Error("PayloadSizeMismatch");
-            string digest=ManagedExtensionPaths.Hash(bytes);
+            string digest=ManagedExtensionDigest.Hash(bytes);
             if(expectedDigest!=null && digest!=expectedDigest) throw Error("PayloadDigestMismatch");
             try
             {
@@ -83,8 +84,9 @@ namespace Utils.Framework.ManagedExtensions
                     if(!entries.TryGetValue(ManagedExtensionManifest.FileName,out manifestEntry)) throw Error("ManagedFilesMismatch");
                     byte[] manifest=ReadEntry(manifestEntry,ManagedExtensionManifestReader.MaxManifestBytes,token);
                     var parsed=ManagedExtensionManifestReader.Read(manifest);
+                    if(gameVersion!=null)parsed=parsed.ForGame(gameVersion);
                     verifyManifest?.Invoke((byte[])manifest.Clone());
-                    var declarations=parsed.Assemblies.Select(a=>a.File).Concat(parsed.Resources).ToDictionary(f=>f.Path,StringComparer.Ordinal);
+                    var declarations=parsed.AllFiles.ToDictionary(f=>f.Path,StringComparer.Ordinal);
                     var allowed=new HashSet<string>(declarations.Keys,StringComparer.Ordinal) {ManagedExtensionManifest.FileName};
                     var allowedDirectories=new HashSet<string>(StringComparer.Ordinal);
                     foreach(string path in allowed)
@@ -97,12 +99,14 @@ namespace Utils.Framework.ManagedExtensions
                         token.ThrowIfCancellationRequested(); var entry=entries[file.Path];
                         if(entry.Length!=file.Length) throw Error("ManagedFileLengthMismatch");
                         byte[] data=ReadEntry(entry,(int)ManagedExtensionManifestReader.MaxFileBytes,token);
-                        if(ManagedExtensionPaths.Hash(data)!=file.Sha256) throw Error("ManagedFileDigestMismatch");
+                        if(ManagedExtensionDigest.Hash(data)!=file.Sha256) throw Error("ManagedFileDigestMismatch");
                         content.Add(file.Path,data);
                     }
+                    foreach(var variant in parsed.Variants)ExtensionLocalizationCatalog.Load(variant.Localization,f=>content[f.Path],token);
                     var localization=ExtensionLocalizationCatalog.Load(parsed.Localization,f=>content[f.Path],token);
-                    var assemblies=parsed.Assemblies.ToDictionary(a=>a.File.Path,a=>content[a.File.Path],StringComparer.Ordinal);
-                    var inspected=ManagedExtensionPayloadInspector.Inspect(parsed,assemblies,token);
+                    var assemblyDeclarations=parsed.Variants.Count==0?parsed.Assemblies.AsEnumerable():parsed.Variants.SelectMany(v=>v.Assemblies);
+                    var assemblies=assemblyDeclarations.ToDictionary(a=>a.File.Path,a=>content[a.File.Path],StringComparer.Ordinal);
+                    var inspected=ManagedExtensionPayloadInspector.InspectAll(parsed,assemblies,token);
                     return new ManagedExtensionZip(manifest,content,digest,inspected,localization);
                 }
             }

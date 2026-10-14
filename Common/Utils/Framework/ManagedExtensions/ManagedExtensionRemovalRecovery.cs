@@ -134,7 +134,7 @@ namespace Utils.Framework.ManagedExtensions
             if (ManagedExtensionPaths.Hash(journal.ManifestBytes) != journal.Receipt.ManifestHash) throw ManagedExtensionJson.Error("RemovalJournalManifestMismatch");
             journal.Manifest = ManagedExtensionManifestReader.Read(journal.ManifestBytes);
             if (journal.Manifest.PackageId != journal.PackageId || journal.Manifest.Version.ToString() != journal.Receipt.Version) throw ManagedExtensionJson.Error("RemovalJournalIdentityMismatch");
-            var expected = journal.Manifest.Assemblies.Select(a=>a.File).Concat(journal.Manifest.Resources).Concat(new[]{new ManagedExtensionFile("manifest.json",journal.ManifestBytes.Length,journal.Receipt.ManifestHash)}).ToList();
+            var expected = journal.Manifest.AllFiles.Concat(new[]{new ManagedExtensionFile("manifest.json",journal.ManifestBytes.Length,journal.Receipt.ManifestHash)}).ToList();
             if (expected.Count!=journal.Receipt.Files.Count || expected.Any(file=>!journal.Receipt.Files.Any(receiptFile=>receiptFile.Path==file.Path && receiptFile.Length==file.Length && receiptFile.Sha256==file.Sha256))) throw ManagedExtensionJson.Error("RemovalJournalFilesMismatch");
             if (!Serialize(journal).SequenceEqual(bytes)) throw ManagedExtensionJson.Error("RemovalJournalNotCanonical");
             return journal;

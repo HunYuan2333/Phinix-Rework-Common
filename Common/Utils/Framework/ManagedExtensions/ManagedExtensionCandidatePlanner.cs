@@ -90,7 +90,8 @@ namespace Utils.Framework.ManagedExtensions
         internal static bool IsHostCompatible(ManagedExtensionManifest manifest, ManagedExtensionHostFacts host)
         {
             var c = manifest.Compatibility;
-            return c.RimWorldVersions.Contains(host.GameVersion) && c.PhinixRange.Contains(host.PhinixVersion) && c.AbstractionsRange.Contains(host.AbstractionsVersion);
+            return manifest.SupportsGame(host.GameVersion) &&
+                c.RimWorldVersions.Contains(host.GameVersion) && c.PhinixRange.Contains(host.PhinixVersion) && c.AbstractionsRange.Contains(host.AbstractionsVersion);
         }
         public static ReadOnlyCollection<ManagedExtensionCandidateResult> Plan(ManagedExtensionInventorySnapshot inventory,
             IReadOnlyDictionary<string, ManagedExtensionInspectedPayload> payloads, ManagedExtensionHostFacts host, string startupId, CancellationToken token)

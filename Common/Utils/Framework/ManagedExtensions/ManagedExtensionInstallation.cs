@@ -37,8 +37,8 @@ namespace Utils.Framework.ManagedExtensions
                 (local?Manifest.Version.CompareTo(ManagedExtensionVersion.Parse(replacement.Version))<0 || replacement.ArtifactSha256==ArtifactSha256:
                     Manifest.Version.CompareTo(ManagedExtensionVersion.Parse(replacement.Version))<=0))) throw ManagedExtensionJson.Error("ManagedReplacementIdentityInvalid");
             Replacement=replacement;
-            if(files==null || files.Count!=Manifest.Assemblies.Count+Manifest.Resources.Count) throw ManagedExtensionJson.Error("ManagedInstallFilesMismatch");
-            var expected=Manifest.Assemblies.Select(a=>a.File).Concat(Manifest.Resources).ToDictionary(f=>f.Path,StringComparer.Ordinal);
+            if(files==null || files.Count!=Manifest.AllFiles.Count()) throw ManagedExtensionJson.Error("ManagedInstallFilesMismatch");
+            var expected=Manifest.AllFiles.ToDictionary(f=>f.Path,StringComparer.Ordinal);
             Content=new Dictionary<string,byte[]>(StringComparer.Ordinal); long length=ManifestBytes.Length;
             foreach(var pair in files)
             {

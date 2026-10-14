@@ -16,7 +16,7 @@ namespace Utils.Framework.ManagedExtensions
         {
             "Assembly-CSharp", "mscorlib", "netstandard", "System", "UnityEngine", "0Harmony", "LiteNetLib", "Google.Protobuf", "Protobuf",
             "Utils", "Connections", "Connections.Client", "Authentication", "Authentication.Client", "UserManagement", "UserManagement.Client",
-            "ClientExtensionAbstractions", "PhinixClient",
+            "ClientExtensionAbstractions", "ClientPresentation.Contracts", "PhinixClient",
             "Phinix.ClientComposition", "Autofac", "Microsoft.Bcl.AsyncInterfaces", "Stateless"
         };
 
@@ -24,11 +24,15 @@ namespace Utils.Framework.ManagedExtensions
         {
             var f = ManagedExtensionJson.Object(ManagedExtensionJson.Read(bytes, MaxManifestBytes),
                 "schemaVersion", "management", "packageId", "name", "version", "targetFramework", "compatibility",
-                "dependencies", "modules", "assemblies", "resources", "externalMods", "localization");
-            if (ManagedExtensionJson.Integer(Get(f, "schemaVersion"), 1, int.MaxValue) != ManagedExtensionManifest.SchemaVersion)
+                "dependencies", "modules", "assemblies", "resources", "externalMods", "localization", "variants");
+            long schema=ManagedExtensionJson.Integer(Get(f, "schemaVersion"), 1, int.MaxValue);
+            if(schema==ManagedExtensionManifest.VariantSchemaVersion) return ReadVariants(f);
+            if (schema != ManagedExtensionManifest.SchemaVersion)
                 throw ManagedExtensionJson.Error("UnsupportedSchema");
-            if (ManagedExtensionJson.Text(Get(f, "management"), 32) != ManagedExtensionManifest.Management ||
-                ManagedExtensionJson.Text(Get(f, "targetFramework"), 32) != "net472") throw ManagedExtensionJson.Error("UnsupportedManagement");
+            if(f.ContainsKey("variants")) throw ManagedExtensionJson.Error("InvalidVariants");
+            if (ManagedExtensionJson.Text(Get(f, "management"), 32) != ManagedExtensionManifest.Management) throw ManagedExtensionJson.Error("UnsupportedManagement");
+            string targetFramework = ManagedExtensionJson.Text(Get(f, "targetFramework"), 32);
+            ManagedExtensionTargetFramework.MetadataName(targetFramework);
             string id = ManagedExtensionJson.Id(Get(f, "packageId"));
             string name = ManagedExtensionJson.Text(Get(f, "name"), 160);
             var version = ManagedExtensionVersion.Parse(ManagedExtensionJson.Text(Get(f, "version"), 32));
@@ -137,7 +141,54 @@ namespace Utils.Framework.ManagedExtensions
                 externalMods.Add(new ManagedExtensionExternalMod(modId, workshopId));
             }
             var localization = f.ContainsKey("localization") ? ExtensionLocalizationDeclaration.Read(f["localization"], resources) : null;
-            return new ManagedExtensionManifest(id, name, version, compatibility, dependencies, modules, assemblies, resources, externalMods, localization);
+            return new ManagedExtensionManifest(id, name, version, compatibility, dependencies, modules, assemblies, resources, externalMods, localization, targetFramework);
+        }
+
+        // The envelope carries complete declarations. No ambient game/CLR state
+        // influences parsing, and every payload remains owned by the one receipt.
+        private static ManagedExtensionManifest ReadVariants(Dictionary<string,XElement> fields)
+        {
+            if(fields.Count!=2 || !fields.ContainsKey("variants")) throw ManagedExtensionJson.Error("InvalidVariants");
+            var variants=new List<ManagedExtensionManifest>();
+            var games=new HashSet<string>(StringComparer.Ordinal);
+            ManagedExtensionManifest first=null;
+            foreach(var node in ManagedExtensionJson.Array(fields["variants"],2))
+            {
+                var clone=new XElement(node); clone.Name="root";
+                byte[] bytes;
+                using(var stream=new System.IO.MemoryStream())
+                {
+                    using(var writer=System.Runtime.Serialization.Json.JsonReaderWriterFactory.CreateJsonWriter(stream,System.Text.Encoding.UTF8,false)) clone.WriteTo(writer);
+                    bytes=stream.ToArray();
+                }
+                var declaration=Read(bytes);
+                if(declaration.Variants.Count!=0 || declaration.Compatibility.RimWorldVersions.Count!=1) throw ManagedExtensionJson.Error("InvalidVariants");
+                string game=declaration.Compatibility.RimWorldVersions[0];
+                if(!games.Add(game) || !ManagedExtensionTargetFramework.SupportsGame(declaration.TargetFramework,game)) throw ManagedExtensionJson.Error("InvalidVariantProfile");
+                if(first==null)first=declaration;
+                else if(!SameVariantContract(first,declaration))throw ManagedExtensionJson.Error("VariantContractMismatch");
+                Func<ManagedExtensionFile,ManagedExtensionFile> prefix=file=>new ManagedExtensionFile(game+"/"+file.Path,file.Length,file.Sha256);
+                variants.Add(new ManagedExtensionManifest(declaration.PackageId,declaration.Name,declaration.Version,declaration.Compatibility,
+                    declaration.Dependencies,declaration.Modules,declaration.Assemblies.Select(a=>new ManagedExtensionAssembly(a.Name,a.Version,a.Culture,a.PublicKeyToken,prefix(a.File))),
+                    declaration.Resources.Select(prefix),declaration.ExternalMods,declaration.Localization==null?null:new ExtensionLocalizationDeclaration(declaration.Localization.DefaultLocale,declaration.Localization.Files.Select(prefix)),declaration.TargetFramework));
+            }
+            if(first==null)throw ManagedExtensionJson.Error("InvalidVariants");
+            var compatibility=new ManagedExtensionCompatibility(games.OrderBy(g=>g,StringComparer.Ordinal),first.Compatibility.PhinixRange,first.Compatibility.AbstractionsRange);
+            var primary=variants[0];
+            var result=new ManagedExtensionManifest(first.PackageId,first.Name,first.Version,compatibility,first.Dependencies,first.Modules,
+                primary.Assemblies,primary.Resources,first.ExternalMods,primary.Localization,primary.TargetFramework,variants);
+            ValidatePathTree(result.AllFiles.Select(f=>f.Path));
+            if(result.AllFiles.Sum(f=>f.Length)>MaxExpandedBytes)throw ManagedExtensionJson.Error("PayloadLimit");
+            return result;
+        }
+        private static bool SameVariantContract(ManagedExtensionManifest a,ManagedExtensionManifest b)
+        {
+            return a.PackageId==b.PackageId && a.Name==b.Name && a.Version.ToString()==b.Version.ToString() &&
+                a.Compatibility.PhinixRange.Text==b.Compatibility.PhinixRange.Text && a.Compatibility.AbstractionsRange.Text==b.Compatibility.AbstractionsRange.Text &&
+                a.Assemblies.Select(x=>x.FullName).OrderBy(x=>x,StringComparer.Ordinal).SequenceEqual(b.Assemblies.Select(x=>x.FullName).OrderBy(x=>x,StringComparer.Ordinal)) &&
+                a.Modules.Select(m=>m.Id+"|"+m.AssemblyName+"|"+m.EntryType+"|"+string.Join(",",m.DependsOn)).SequenceEqual(b.Modules.Select(m=>m.Id+"|"+m.AssemblyName+"|"+m.EntryType+"|"+string.Join(",",m.DependsOn))) &&
+                a.Dependencies.Select(d=>d.PackageId+"|"+d.VersionRange.Text+"|"+d.Optional).SequenceEqual(b.Dependencies.Select(d=>d.PackageId+"|"+d.VersionRange.Text+"|"+d.Optional)) &&
+                a.ExternalMods.Select(m=>m.PackageId+"|"+m.WorkshopId).SequenceEqual(b.ExternalMods.Select(m=>m.PackageId+"|"+m.WorkshopId));
         }
 
         internal static XElement Get(Dictionary<string, XElement> fields, string name) { return ManagedExtensionJson.Required(fields, name); }

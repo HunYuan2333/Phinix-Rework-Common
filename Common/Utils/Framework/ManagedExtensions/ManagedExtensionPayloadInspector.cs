@@ -27,6 +27,16 @@ namespace Utils.Framework.ManagedExtensions
 
     public static class ManagedExtensionPayloadInspector
     {
+        public static ManagedExtensionInspectedPayload InspectAll(ManagedExtensionManifest manifest,
+            IReadOnlyDictionary<string,byte[]> bytes,CancellationToken token)
+        {
+            if(manifest.Variants.Count==0)return Inspect(manifest,bytes,token);
+            var declarations=manifest.Variants.SelectMany(v=>v.Assemblies).ToList();
+            if(bytes.Count!=declarations.Count || bytes.Keys.Any(path=>!declarations.Any(a=>a.File.Path==path)))throw ManagedExtensionJson.Error("AssemblyFilesMismatch");
+            foreach(var variant in manifest.Variants)
+                Inspect(variant,variant.Assemblies.ToDictionary(a=>a.File.Path,a=>bytes[a.File.Path],StringComparer.Ordinal),token);
+            return Inspect(manifest,manifest.Assemblies.ToDictionary(a=>a.File.Path,a=>bytes[a.File.Path],StringComparer.Ordinal),token);
+        }
         public static ManagedExtensionInspectedPayload Inspect(ManagedExtensionManifest manifest,
             IReadOnlyDictionary<string, byte[]> assemblyBytes, CancellationToken cancellationToken)
         {
@@ -51,7 +61,7 @@ namespace Utils.Framework.ManagedExtensions
                 var metadata = ManagedExtensionMetadataReader.Read(frozen);
                 cancellationToken.ThrowIfCancellationRequested();
                 if (metadata.Identity.FullName != declaration.FullName) throw ManagedExtensionJson.Error("AssemblyIdentityMismatch");
-                if (metadata.TargetFramework != ".NETFramework,Version=v4.7.2") throw ManagedExtensionJson.Error("AssemblyTargetFrameworkMismatch");
+                if (metadata.TargetFramework != ManagedExtensionTargetFramework.MetadataName(manifest.TargetFramework)) throw ManagedExtensionJson.Error("AssemblyTargetFrameworkMismatch");
                 var declaredModules = manifest.Modules.Where(m => m.AssemblyName == declaration.Name).ToList();
                 if (metadata.Modules.Count != declaredModules.Count || metadata.ModuleTypes.Count != declaredModules.Count)
                     throw ManagedExtensionJson.Error("AssemblyModulesMismatch");
