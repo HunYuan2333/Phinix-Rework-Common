@@ -68,6 +68,23 @@ namespace Utils.Framework.Themes
         }
     }
 
+    // A verified catalog source, supplied by the repository owner after its publication check.
+    // Storage namespace remains stable across local/catalog installs of the same package.
+    public sealed class ThemePackageOrigin
+    {
+        public ThemePackageOrigin(string sourceId,string repositoryIdentitySha256,string snapshotId,string catalogSha256)
+        {
+            SourceId=ManagedExtensionJson.Identifier(sourceId);
+            RepositoryIdentitySha256=ManagedExtensionJson.Hex(repositoryIdentitySha256,64);
+            SnapshotId=ManagedExtensionJson.Hex(snapshotId,40);
+            CatalogSha256=ManagedExtensionJson.Hex(catalogSha256,64);
+        }
+        public string SourceId { get; }
+        public string RepositoryIdentitySha256 { get; }
+        public string SnapshotId { get; }
+        public string CatalogSha256 { get; }
+    }
+
     public sealed class ThemePackage
     {
         public const int MaximumPackageBytes=8*1024*1024;
@@ -76,6 +93,9 @@ namespace Utils.Framework.Themes
         private readonly byte[] archive;
         private ThemePackage(ThemePackageManifest manifest,Dictionary<string,byte[]> files,byte[] archive)
         { Manifest=manifest; this.files=files; this.archive=archive; Sha256=ThemePackageJson.Hash(archive); ManifestSha256=ThemePackageJson.Hash(files["manifest.json"]); }
+        public ThemePackageOrigin Origin { get; private set; }
+        public ThemePackage WithOrigin(ThemePackageOrigin origin)
+        { if(origin==null) throw new ArgumentNullException(nameof(origin)); return new ThemePackage(Manifest,files,archive) { Origin=origin }; }
         public ThemePackageManifest Manifest { get; }
         public string Sha256 { get; }
         public string ManifestSha256 { get; }

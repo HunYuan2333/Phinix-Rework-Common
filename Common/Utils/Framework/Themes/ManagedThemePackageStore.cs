@@ -17,7 +17,8 @@ namespace Utils.Framework.Themes
         private readonly Dictionary<string,byte[]> documents;
         public ThemePackageManifest Manifest { get; }
         public string ArtifactSha256 => Record.ArtifactSha256;
-        public string SourceId => Record.SourceId;
+        public string SourceId => Record.Origin?.SourceId??Record.SourceId;
+        public ThemePackageOrigin Origin => Record.Origin;
         public byte[] CopyDocument(string path) => (byte[])documents[path].Clone();
     }
     public sealed class ThemePackageInventory
@@ -76,7 +77,7 @@ namespace Utils.Framework.Themes
                             ManagedExtensionInventoryReader.NoLinks(file);
                             var receipt=ManagedExtensionInventoryReader.Bytes(file,65536,token);
                             // Read only enough identity to resolve bounded owned locations, then validate canonical facts.
-                            var f=ManagedExtensionJson.Object(ManagedExtensionJson.Read(receipt,65536),"schemaVersion","kind","sourceKind","sourceId","packageId","version","manifestSha256","artifactSha256","installationTransactionId","files");
+                            var f=ManagedExtensionJson.Object(ManagedExtensionJson.Read(receipt,65536),"schemaVersion","kind","sourceKind","sourceId","packageId","version","manifestSha256","artifactSha256","installationTransactionId","files","origin");
                             string id=ManagedExtensionJson.Id(ManagedExtensionJson.Required(f,"packageId"));
                             if(Path.GetFileName(file)!=ManagedExtensionPaths.PackageKey(ManagedPackageStorageRecord.LocalSource,id)+".json") throw Error("DataRecordPathMismatch");
                             recordKeys.Add(Path.GetFileNameWithoutExtension(file));
@@ -139,7 +140,7 @@ namespace Utils.Framework.Themes
             var files=package.Manifest.Themes.ToDictionary(t=>t.Path,t=>package.CopyFile(t.Path),StringComparer.Ordinal);
             byte[] manifest=package.CopyFile("manifest.json");
             var row=ManagedPackageStorageRecord.Create(package.Manifest.PackageId,package.Manifest.Version.ToString(),package.Sha256,manifest,
-                package.Manifest.Themes.Select(t=>new ManagedExtensionFile(t.Path,t.Length,t.Sha256)).Concat(new[]{new ManagedExtensionFile("manifest.json",manifest.Length,package.ManifestSha256)}),Guid.NewGuid().ToString("N"));
+                package.Manifest.Themes.Select(t=>new ManagedExtensionFile(t.Path,t.Length,t.Sha256)).Concat(new[]{new ManagedExtensionFile("manifest.json",manifest.Length,package.ManifestSha256)}),Guid.NewGuid().ToString("N"),package.Origin);
             {
                 ManagedExtensionInstallationRecovery.InstallData(paths,row,manifest,files,old?.Record,token,t=>
                 {
@@ -160,7 +161,7 @@ namespace Utils.Framework.Themes
             if(old==null || old.ArtifactSha256!=expectedArtifact) throw Error("ManagedStateChanged");
             if(selectionIntent==null || selectionIntent.Length>512 || selectionIntent.Any(c=>char.IsControl(c) && c!='\n')) throw Error("RemovalIntentInvalid");
             string operation=Guid.NewGuid().ToString("N");
-            byte[] manifest=ManagedExtensionInventoryReader.Bytes(Path.Combine(paths.GetPackageDirectory(old.SourceId,packageId),"manifest.json"),65536,token);
+            byte[] manifest=ManagedExtensionInventoryReader.Bytes(Path.Combine(paths.GetPackageDirectory(old.Record.SourceId,packageId),"manifest.json"),65536,token);
             byte[] journal=RemovalBytes(operation,old.Record,manifest,selectionIntent);
             string path=Path.Combine(paths.TransactionsDirectory,"rm-"+operation+".json");
             ManagedExtensionInstallationRecovery.ValidateFilePath(path); ManagedExtensionInventoryReader.NoLinks(path);
@@ -194,16 +195,19 @@ namespace Utils.Framework.Themes
             if(Path.GetFileName(path)!="rm-"+operation+".json") throw Error("RemovalJournalIdentityMismatch");
             byte[] receipt=Decode(f,"receiptBase64",65536),state=Decode(f,"stateBase64",8192),manifest=Decode(f,"manifestBase64",65536);
             string intent;
-            try {intent=new UTF8Encoding(false,true).GetString(Decode(f,"intentBase64",2048));}
+            try {intent=new UTF8Encoding(false,true).GetString(Decode(f,"intentBase64",2048,allowEmpty:true));}
             catch(DecoderFallbackException ex) {throw new ManagedExtensionValidationException("RemovalIntentInvalid",ex);}
             if(intent.Length>512 || intent.Any(c=>char.IsControl(c) && c!='\n')) throw Error("RemovalIntentInvalid");
             var row=ManagedPackageStorageRecord.Read(receipt,state,manifest);
             if(!bytes.SequenceEqual(RemovalBytes(operation,row,manifest,intent))) throw Error("RemovalJournalNotCanonical");
             ManagedExtensionRemovalRecovery.FinishOwned(paths,row.SourceId,row.PackageId,operation,receipt,state,row.Files,path,bytes,token,null,()=>completeRemoval(intent));
         }
-        private static byte[] Decode(Dictionary<string,System.Xml.Linq.XElement> f,string key,int maximum)
+        private static byte[] Decode(Dictionary<string,System.Xml.Linq.XElement> f,string key,int maximum,bool allowEmpty=false)
         {
-            try { var bytes=Convert.FromBase64String(ManagedExtensionJson.Text(ManagedExtensionJson.Required(f,key),(maximum+2)/3*4)); if(bytes.Length>maximum) throw Error("DataRecordLimit"); return bytes; }
+            var node=ManagedExtensionJson.Required(f,key); ManagedExtensionJson.Type(node,"string");
+            // Removing an inactive package has no selected-theme recovery to perform.
+            if(allowEmpty && node.Value.Length==0) return new byte[0];
+            try { var bytes=Convert.FromBase64String(ManagedExtensionJson.Text(node,(maximum+2)/3*4)); if(bytes.Length>maximum) throw Error("DataRecordLimit"); return bytes; }
             catch(FormatException ex) { throw new ManagedExtensionValidationException("DataRecordInvalid",ex); }
         }
         internal static void CheckIdentity(string saveRoot,string packageId)
