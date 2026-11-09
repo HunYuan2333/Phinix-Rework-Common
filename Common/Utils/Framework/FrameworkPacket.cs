@@ -18,6 +18,9 @@ namespace Utils.Framework
     [DataContract]
     public sealed class FrameworkPacket
     {
+        [DataMember(Order = 12, EmitDefaultValue = false)]
+        public CommandRoute CommandRoute { get; set; }
+
         [DataMember(Order = 0)]
         public int Version { get; set; } = FrameworkProtocol.Version;
 
