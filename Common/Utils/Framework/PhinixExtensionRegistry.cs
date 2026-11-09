@@ -563,6 +563,7 @@ namespace Utils.Framework
             }
             (discovered?.ApiRegistry as ExtensionApiRegistry)?.UnregisterOwner(extensionId);
             hostContext?.UnregisterPersistents(extensionId);
+            if (hostContext != null && hostContext.TryGetService<IClientCommandCapabilities>(out var capabilities)) capabilities.RevokeOwner(extensionId);
         }
 
         private static Action<string, LogLevel> createScopedLog(ExtensionHostContext hostContext, string extensionId, Action<string, LogLevel> fallback)
@@ -588,6 +589,7 @@ namespace Utils.Framework
                 "core.framework.v2",
                 "core.message-pipeline",
                 "core.command-pipeline",
+                CommandRelayProtocol.Capability,
                 "core.item-pipeline",
                 "core.outbound-pipeline"
             };
@@ -872,6 +874,7 @@ namespace Utils.Framework
                 }
                 apiRegistry.UnregisterOwner(extensionId);
                 hostContext.UnregisterPersistents(extensionId);
+                if (hostContext.TryGetService<IClientCommandCapabilities>(out var capabilities)) capabilities.RevokeOwner(extensionId);
             }
 
             private void addIfMissing<T>(ICollection<T> collection, T item)

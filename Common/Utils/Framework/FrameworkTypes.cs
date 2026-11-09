@@ -1002,6 +1002,9 @@ namespace Utils.Framework
 
     public sealed class ServerFrameworkContext
     {
+        // Set by the Command runner before observers execute. Network submission has no business ACK semantics.
+        public RelayResult CommandRelayResult { get; set; }
+
         public string ConnectionId { get; set; }
 
         public string SessionId { get; set; }
