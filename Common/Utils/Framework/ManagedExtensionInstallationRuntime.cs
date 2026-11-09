@@ -15,29 +15,32 @@ namespace Utils.Framework
         public ManagedExtensionInstallResult Install(ManagedExtensionInstallRequest request,IEnumerable<string> disabledModules,CancellationToken token)
         {
             if(request==null) throw new ArgumentNullException(nameof(request));
+            lock(ManagedPackageMutation.Gate)
             lock(sync)
             {
                 string operation=Guid.NewGuid().ToString("N");
                 var rows=request.Packages.Select(p=>new ManagedExtensionPackageSnapshot(ManagedExtensionPaths.PackageKey(p.SourceId,p.Manifest.PackageId),
                     p.SourceId,p.RepositoryIdentitySha256,p.Manifest.PackageId,p.Manifest.Version.ToString(),ManagedExtensionPaths.Hash(p.ManifestBytes),
-                    p.CatalogSnapshotId,p.CatalogSha256,p.ArtifactSha256,operation,operation,p.Manifest,ManagedExtensionDesiredState.Enabled,ManagedExtensionContentState.ContentVerified,null)).ToList();
+                    p.CatalogSnapshotId,p.CatalogSha256,p.ArtifactSha256,operation,operation,p.Manifest.ForGame(startupHost?.GameVersion),ManagedExtensionDesiredState.Enabled,ManagedExtensionContentState.ContentVerified,null)).ToList();
                 bool writing=false;
                 try
                 {
                     token.ThrowIfCancellationRequested();
-                    var inventory=ManagedExtensionInventoryReader.Read(paths,token);
+                    var inventory=ManagedExtensionInventoryReader.Read(paths,token,startupHost?.GameVersion);
                     string code=ManagementGate(inventory,token); if(code!=null) throw ManagedExtensionJson.Error(code);
                     if(inventory.Packages.Count+request.Packages.Count(p=>p.Replacement==null)>ManagedExtensionInventoryReader.MaxPackages) throw ManagedExtensionJson.Error("PackageLimit");
                     var disabled=new HashSet<string>(disabledModules??new string[0],StringComparer.OrdinalIgnoreCase);
                     foreach(var row in rows) Emit("install","ManagedInstallRequested",row);
                     foreach(var package in request.Packages.Where(p=>p.Replacement!=null)) Emit("install","ManagedReplacementOriginal",CopyState(package.Replacement,ManagedExtensionDesiredState.Enabled,operation));
                     ValidateInstallation(request,rows,inventory,disabled,token);
+                    request.RevalidateAuthorization?.Invoke(token);
                     foreach(var row in rows) Emit("install","ManagedInstallPreflightPassed",row);
                     ManagedExtensionInstallationRecovery.Install(paths,request,rows,token,InstallationFault,(c,r)=>Emit("install",c,r),t=>
                     {
-                        var fresh=ManagedExtensionInventoryReader.Read(paths,t);
+                        var fresh=ManagedExtensionInventoryReader.Read(paths,t,startupHost?.GameVersion);
                         if(fresh.Diagnostics.Count!=0 || !SameInventory(inventory,fresh)) throw ManagedExtensionJson.Error("ManagedStateChanged");
                         ValidateInstallation(request,rows,fresh,disabled,t);
+                        request.RevalidateAuthorization?.Invoke(t);
                         foreach(var row in rows) Emit("install","ManagedInstallCommitRevalidated",row);
                     },()=>writing=true);
                     return new ManagedExtensionInstallResult(true,"ManagedInstallSaved",operation,rows);
@@ -109,6 +112,7 @@ namespace Utils.Framework
             for(int i=0;i<incoming.Count;i++)
             {
                 token.ThrowIfCancellationRequested(); var row=incoming[i]; var package=request.Packages[i];
+                Themes.ManagedThemePackageStore.CheckIdentity(paths.SaveDataRoot,row.PackageId);
                 if(package.Replacement==null)
                 {
                     if(inventory.Packages.Any(p=>p.PackageId==row.PackageId)) throw ManagedExtensionJson.Error("ManagedInstallPackageConflict");
@@ -119,28 +123,35 @@ namespace Utils.Framework
                 assemblyNames.UnionWith(incomingNames);
                 if(row.Manifest.Modules.Any(m=>!moduleIds.Add(m.Id))) throw ManagedExtensionJson.Error("CandidateModuleConflict");
                 if(row.Manifest.Modules.All(m=>disabled.Contains(m.Id))) throw ManagedExtensionJson.Error("ManagedAllModulesDisabled");
-                foreach(var file in row.Manifest.Assemblies.Select(a=>a.File).Concat(row.Manifest.Resources))
+                foreach(var file in row.Manifest.AllFiles)
                     if(ManagedExtensionPaths.Hash(package.Content[file.Path])!=file.Sha256) throw ManagedExtensionJson.Error("FileDigestMismatch");
-                ExtensionLocalizationCatalog.Load(row.Manifest.Localization,file=>package.Content[file.Path],token);
-                var assemblies=row.Manifest.Assemblies.ToDictionary(a=>a.File.Path,a=>package.Content[a.File.Path],StringComparer.Ordinal);
-                payloads.Add(row.RecordKey,ManagedExtensionPayloadInspector.Inspect(row.Manifest,assemblies,token));
+                foreach(var variant in row.Manifest.Variants.Count==0?new[]{row.Manifest}.AsEnumerable():row.Manifest.Variants)
+                    ExtensionLocalizationCatalog.Load(variant.Localization,file=>package.Content[file.Path],token);
+                var assemblies=(row.Manifest.Variants.Count==0?row.Manifest.Assemblies.AsEnumerable():row.Manifest.Variants.SelectMany(v=>v.Assemblies)).ToDictionary(a=>a.File.Path,a=>package.Content[a.File.Path],StringComparer.Ordinal);
+                payloads.Add(row.RecordKey,ManagedExtensionPayloadInspector.InspectAll(row.Manifest,assemblies,token));
             }
             long frozen=request.Packages.Sum(p=>p.ExpandedBytes);
             foreach(var row in inventory.Packages.Where(p=>p.DesiredState==ManagedExtensionDesiredState.Enabled && !replacements.Contains(p.RecordKey)))
             {
-                token.ThrowIfCancellationRequested(); long size=row.Manifest.Assemblies.Sum(a=>a.File.Length);
+                token.ThrowIfCancellationRequested(); long size=row.Manifest.AllFiles.Sum(f=>f.Length);
                 if(frozen+size>ManagedExtensionManifestReader.MaxExpandedBytes) throw ManagedExtensionJson.Error("ManagedInstallMemoryLimit");
                 var content=new Dictionary<string,byte[]>();
-                foreach(var a in row.Manifest.Assemblies)
+                foreach(var a in row.Manifest.Variants.Count==0?row.Manifest.Assemblies.AsEnumerable():row.Manifest.Variants.SelectMany(v=>v.Assemblies))
                 {
                     string file=Path.Combine(paths.GetPackageDirectory(row.SourceId,row.PackageId),a.File.Path);
                     ManagedExtensionInventoryReader.NoLinks(file); content.Add(a.File.Path,ManagedExtensionInventoryReader.Bytes(file,(int)ManagedExtensionManifestReader.MaxFileBytes,token));
                 }
-                payloads.Add(row.RecordKey,ManagedExtensionPayloadInspector.Inspect(row.Manifest,content,token)); frozen+=size;
+                payloads.Add(row.RecordKey,ManagedExtensionPayloadInspector.InspectAll(row.Manifest,content,token)); frozen+=size;
             }
             var combined=inventory.Packages.Where(p=>!replacements.Contains(p.RecordKey)).Concat(incoming).ToList();
             // Upgrades must not break existing consumers, including their exact CLR references.
-            ValidateCandidates(combined,payloads,disabled,combined.Where(p=>p.DesiredState==ManagedExtensionDesiredState.Enabled).Select(p=>p.RecordKey),token);
+            // Host upgrades may have already rejected unrelated installed packages. Keep
+            // them in the graph (so they cannot satisfy dependencies), but do not let
+            // their existing incompatibility prevent independent packages being repaired.
+            // Incoming packages and all host-compatible existing consumers remain required.
+            var incomingKeys=new HashSet<string>(incoming.Select(p=>p.RecordKey),StringComparer.Ordinal);
+            ValidateCandidates(combined,payloads,disabled,combined.Where(p=>p.DesiredState==ManagedExtensionDesiredState.Enabled &&
+                (incomingKeys.Contains(p.RecordKey) || ManagedExtensionCandidatePlanner.IsHostCompatible(p.Manifest,startupHost))).Select(p=>p.RecordKey),token);
             // Startup eagerly loads dependency-first; reject CLR cycles before accepting new packages.
             var remaining=payloads.Values.SelectMany(p=>p.Assemblies).ToDictionary(a=>a.Metadata.Identity.FullName,StringComparer.Ordinal);
             while(remaining.Count!=0)

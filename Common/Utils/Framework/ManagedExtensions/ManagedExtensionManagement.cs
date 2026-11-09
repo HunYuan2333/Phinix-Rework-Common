@@ -18,7 +18,7 @@ namespace Utils.Framework.ManagedExtensions
         public string ModuleSettingsBlockCode { get; }
         public bool ModulesRestartPending { get; }
         public bool RestartPending => Current==null || Current.Package.DesiredState!=Package.DesiredState ||
-            Current.Package.Version!=Package.Version || Current.Package.ManifestSha256!=Package.ManifestSha256;
+            Current.Package.Version!=Package.Version || Current.Package.ManifestSha256!=Package.ManifestSha256 || Current.Package.ArtifactSha256!=Package.ArtifactSha256;
     }
 
     public sealed class ManagedExtensionManagementSnapshot

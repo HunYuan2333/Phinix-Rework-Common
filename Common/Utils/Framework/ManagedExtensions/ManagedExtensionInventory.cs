@@ -16,10 +16,11 @@ namespace Utils.Framework.ManagedExtensions
     /// <summary>Stable allocation only. No directory creation or filesystem certification.</summary>
     public sealed class ManagedExtensionPaths
     {
-        public ManagedExtensionPaths(string saveDataRoot)
+        public ManagedExtensionPaths(string saveDataRoot) : this(saveDataRoot, "ManagedExtensions") { }
+        internal ManagedExtensionPaths(string saveDataRoot, string area)
         {
             SaveDataRoot = Absolute(saveDataRoot);
-            RootDirectory = Path.Combine(SaveDataRoot, "Phinix", "ManagedExtensions");
+            RootDirectory = Path.Combine(SaveDataRoot, "Phinix", area);
             PackagesDirectory = Path.Combine(RootDirectory, "packages");
             InstalledRecordsDirectory = Path.Combine(RootDirectory, "state", "installed");
             DesiredStateDirectory = Path.Combine(RootDirectory, "state", "desired");
@@ -72,6 +73,7 @@ namespace Utils.Framework.ManagedExtensions
         }
         public string RecordKey { get; }
         public string SourceId { get; }
+        public bool IsLocalDevelopment => SourceId==ManagedExtensionInstallPackage.LocalDevelopmentSourceId && CatalogSnapshotId==null;
         public string RepositoryIdentitySha256 { get; }
         public string PackageId { get; }
         public string Version { get; }
@@ -107,7 +109,7 @@ namespace Utils.Framework.ManagedExtensions
             internal List<ManagedExtensionFile> Files;
         }
 
-        public static ManagedExtensionInventorySnapshot Read(ManagedExtensionPaths paths, CancellationToken cancellationToken)
+        public static ManagedExtensionInventorySnapshot Read(ManagedExtensionPaths paths, CancellationToken cancellationToken, string gameVersion = null)
         {
             if (paths == null) throw new ArgumentNullException(nameof(paths));
             cancellationToken.ThrowIfCancellationRequested();
@@ -129,7 +131,7 @@ namespace Utils.Framework.ManagedExtensions
                 foreach (string record in records.OrderBy(Path.GetFileName, StringComparer.Ordinal))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    packages.Add(ReadPackage(paths, record, cancellationToken));
+                    packages.Add(ReadPackage(paths, record, cancellationToken, gameVersion));
                 }
             }
             catch (ManagedExtensionValidationException ex) { diagnostics.Add(ex.Code); }
@@ -138,7 +140,7 @@ namespace Utils.Framework.ManagedExtensions
             return new ManagedExtensionInventorySnapshot(packages, diagnostics);
         }
 
-        private static ManagedExtensionPackageSnapshot ReadPackage(ManagedExtensionPaths paths, string record, CancellationToken token)
+        private static ManagedExtensionPackageSnapshot ReadPackage(ManagedExtensionPaths paths, string record, CancellationToken token, string gameVersion)
         {
             Receipt receipt = null;
             ManagedExtensionManifest manifest = null;
@@ -161,9 +163,10 @@ namespace Utils.Framework.ManagedExtensions
                 byte[] manifestBytes = Bytes(manifestPath, ManagedExtensionManifestReader.MaxManifestBytes, token);
                 if (ManagedExtensionPaths.Hash(manifestBytes) != receipt.ManifestHash) throw ManagedExtensionJson.Error("ManifestDigestMismatch");
                 manifest = ManagedExtensionManifestReader.Read(manifestBytes);
+                if(gameVersion != null) manifest=manifest.ForGame(gameVersion);
                 if (manifest.PackageId != receipt.PackageId || manifest.Version.ToString() != receipt.Version) throw ManagedExtensionJson.Error("ManifestIdentityMismatch");
 
-                var expected = manifest.Assemblies.Select(a => a.File).Concat(manifest.Resources).ToList();
+                var expected = manifest.AllFiles.ToList();
                 expected.Add(new ManagedExtensionFile(ManagedExtensionManifest.FileName, manifestBytes.Length, receipt.ManifestHash));
                 if (expected.Count != receipt.Files.Count || expected.Any(f => !receipt.Files.Any(r =>
                     r.Path == f.Path && r.Length == f.Length && r.Sha256 == f.Sha256))) throw ManagedExtensionJson.Error("ReceiptFilesMismatch");
@@ -201,14 +204,22 @@ namespace Utils.Framework.ManagedExtensions
         {
             var f = ManagedExtensionJson.Object(ManagedExtensionJson.Read(bytes, MaxRecordBytes),
                 "schemaVersion", "sourceId", "repositoryIdentitySha256", "packageId", "version", "manifestSha256", "catalogSnapshotId",
-                "catalogSha256", "artifactSha256", "installationTransactionId", "files");
-            if (ManagedExtensionJson.Integer(Get(f, "schemaVersion"), 1, int.MaxValue) != 1) throw ManagedExtensionJson.Error("UnsupportedReceiptSchema");
+                "catalogSha256", "artifactSha256", "installationTransactionId", "files", "sourceKind");
+            long schema=ManagedExtensionJson.Integer(Get(f,"schemaVersion"),1,int.MaxValue);
+            bool local=schema==2;
+            if(schema!=1 && schema!=2) throw ManagedExtensionJson.Error("UnsupportedReceiptSchema");
+            if(local && (ManagedExtensionJson.Text(Get(f,"sourceKind"),32)!="local-development" ||
+                ManagedExtensionJson.Id(Get(f,"sourceId"))!=ManagedExtensionInstallPackage.LocalDevelopmentSourceId ||
+                f.ContainsKey("repositoryIdentitySha256") || f.ContainsKey("catalogSnapshotId") || f.ContainsKey("catalogSha256")))
+                throw ManagedExtensionJson.Error("ManagedInstallProvenanceMismatch");
+            if(!local && (f.ContainsKey("sourceKind") || ManagedExtensionJson.Id(Get(f,"sourceId"))==ManagedExtensionInstallPackage.LocalDevelopmentSourceId))
+                throw ManagedExtensionJson.Error("ManagedInstallProvenanceMismatch");
             var result = new Receipt
             {
-                SourceId = ManagedExtensionJson.Id(Get(f, "sourceId")), IdentityHash = ManagedExtensionJson.Hex(Get(f, "repositoryIdentitySha256"), 64),
+                SourceId = ManagedExtensionJson.Id(Get(f, "sourceId")), IdentityHash = local?null:ManagedExtensionJson.Hex(Get(f, "repositoryIdentitySha256"), 64),
                 PackageId = ManagedExtensionJson.Id(Get(f, "packageId")), Version = ManagedExtensionVersion.Parse(ManagedExtensionJson.Text(Get(f, "version"), 32)).ToString(),
                 ManifestHash = ManagedExtensionJson.Hex(Get(f, "manifestSha256"), 64), TransactionId = ManagedExtensionJson.Hex(Get(f, "installationTransactionId"), 32),
-                SnapshotId = ManagedExtensionJson.Hex(Get(f, "catalogSnapshotId"), 40), CatalogHash = ManagedExtensionJson.Hex(Get(f, "catalogSha256"), 64),
+                SnapshotId = local?null:ManagedExtensionJson.Hex(Get(f, "catalogSnapshotId"), 40), CatalogHash = local?null:ManagedExtensionJson.Hex(Get(f, "catalogSha256"), 64),
                 ArtifactHash = ManagedExtensionJson.Hex(Get(f, "artifactSha256"), 64),
                 Files = new List<ManagedExtensionFile>()
             };

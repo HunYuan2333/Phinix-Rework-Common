@@ -11,6 +11,9 @@
   <ItemGroup>
     <ProjectReference Include="..\..\Dependencies\protobuf\csharp\src\Google.Protobuf\Google.Protobuf.csproj" />
   </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net472'">
+    <Reference Include="System.IO.Compression" />
+  </ItemGroup>
 
   <ItemGroup>
     <Content Include="Framework\Proto\Shared\*.proto" />
