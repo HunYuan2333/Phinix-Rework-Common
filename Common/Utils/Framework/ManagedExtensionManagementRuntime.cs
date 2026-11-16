@@ -17,7 +17,7 @@ namespace Utils.Framework
             lock(sync)
             {
                 token.ThrowIfCancellationRequested();
-                var inventory=ManagedExtensionInventoryReader.Read(paths,token);
+                var inventory=ManagedExtensionInventoryReader.Read(paths,token,startupHost?.GameVersion);
                 string global=ManagementGate(inventory,token);
                 var disabled=new HashSet<string>(disabledModules??new string[0],StringComparer.OrdinalIgnoreCase);
                 var rows=inventory.Packages.Select(row=>
@@ -45,7 +45,7 @@ namespace Utils.Framework
                 {
                     token.ThrowIfCancellationRequested();
                     if(desired==ManagedExtensionDesiredState.Unknown) throw ManagedExtensionJson.Error("InvalidDesiredState");
-                    var inventory=ManagedExtensionInventoryReader.Read(paths,token);
+                    var inventory=ManagedExtensionInventoryReader.Read(paths,token,startupHost?.GameVersion);
                     string code=ManagementGate(inventory,token);
                     if(code!=null) throw ManagedExtensionJson.Error(code);
                     row=inventory.Packages.SingleOrDefault(p=>p.RecordKey!=null && p.RecordKey==expected.RecordKey);
@@ -143,17 +143,17 @@ namespace Utils.Framework
             foreach(var row in rows.Where(p=>p.DesiredState==ManagedExtensionDesiredState.Enabled && OwnershipGate(p)==null))
             {
                 token.ThrowIfCancellationRequested();
-                long size=row.Manifest.Assemblies.Sum(a=>a.File.Length);
+                long size=row.Manifest.AllFiles.Sum(f=>f.Length);
                 if(frozen+size>ManagedExtensionManifestReader.MaxExpandedBytes) throw ManagedExtensionJson.Error("ManagedStartupMemoryLimit");
                 var bytes=new Dictionary<string,byte[]>();
                 try
                 {
-                    foreach(var asm in row.Manifest.Assemblies)
+                    foreach(var asm in row.Manifest.Variants.Count==0?row.Manifest.Assemblies.AsEnumerable():row.Manifest.Variants.SelectMany(v=>v.Assemblies))
                     {
                         string file=Path.Combine(paths.GetPackageDirectory(row.SourceId,row.PackageId),asm.File.Path);
                         ManagedExtensionInventoryReader.NoLinks(file); bytes.Add(asm.File.Path,ManagedExtensionInventoryReader.Bytes(file,(int)ManagedExtensionManifestReader.MaxFileBytes,token));
                     }
-                    payloads[row.RecordKey]=ManagedExtensionPayloadInspector.Inspect(row.Manifest,bytes,token); frozen+=size;
+                    payloads[row.RecordKey]=ManagedExtensionPayloadInspector.InspectAll(row.Manifest,bytes,token); frozen+=size;
                 }
                 catch(ManagedExtensionValidationException) { if(row.RecordKey==target.RecordKey) throw; }
                 catch(IOException) { if(row.RecordKey==target.RecordKey) throw; }
@@ -170,7 +170,11 @@ namespace Utils.Framework
             var planned=ManagedExtensionCandidatePlanner.Plan(new ManagedExtensionInventorySnapshot(rows,new string[0]),payloads,facts,startupId,token);
             var targetKeys=new HashSet<string>(targets,StringComparer.Ordinal);
             foreach(var result in planned.Where(p=>targetKeys.Contains(p.Package.RecordKey)))
-                if(result.DiagnosticCode!=null) throw new ManagedExtensionValidationException(result.DiagnosticCode) {ReferenceFailure=result.ReferenceFailure};
+                if(result.DiagnosticCode!=null)
+                {
+                    Emit("management-preflight",result.DiagnosticCode,result.Package,reference:result.ReferenceFailure);
+                    throw new ManagedExtensionValidationException(result.DiagnosticCode) {ReferenceFailure=result.ReferenceFailure};
+                }
             var codes=ManagedExtensionModuleGate.Check(facts,planned.Where(p=>p.DiagnosticCode==null).Select(p=>p.Package),disabled,token);
             // Propagate a rejected module provider to packages depending on it.
             bool changed;
@@ -182,7 +186,15 @@ namespace Utils.Framework
                         p.Package.Manifest.Modules.Any(m=>m.DependsOn.Any(id=>other.Package.Manifest.Modules.Any(n=>n.Id==id))))))
                     { codes[p.Package.RecordKey]="ManagedDependencyRejected"; changed=true; }
             } while(changed);
-            foreach(string key in targetKeys) { string code; if(codes.TryGetValue(key,out code)) throw ManagedExtensionJson.Error(code); }
+            foreach(string key in targetKeys)
+            {
+                string code;
+                if(codes.TryGetValue(key,out code))
+                {
+                    Emit("management-preflight",code,rows.Single(p=>p.RecordKey==key));
+                    throw ManagedExtensionJson.Error(code);
+                }
+            }
         }
         private static ManagedExtensionPackageSnapshot CopyState(ManagedExtensionPackageSnapshot row, ManagedExtensionDesiredState desired, string operation)
         { return new ManagedExtensionPackageSnapshot(row.RecordKey,row.SourceId,row.RepositoryIdentitySha256,row.PackageId,row.Version,row.ManifestSha256,row.CatalogSnapshotId,

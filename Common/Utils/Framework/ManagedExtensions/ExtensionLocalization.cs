@@ -53,7 +53,7 @@ namespace Utils.Framework.ManagedExtensions
     public sealed class ExtensionLocalizationDeclaration
     {
         public const int MaxLocales=16,MaxFileBytes=128*1024,MaxTotalBytes=1024*1024;
-        private ExtensionLocalizationDeclaration(string locale,IEnumerable<ManagedExtensionFile> files)
+        internal ExtensionLocalizationDeclaration(string locale,IEnumerable<ManagedExtensionFile> files)
         { DefaultLocale=locale; Files=ManagedExtensionCompatibility.Freeze(files); }
         public string DefaultLocale { get; }
         public ReadOnlyCollection<ManagedExtensionFile> Files { get; }

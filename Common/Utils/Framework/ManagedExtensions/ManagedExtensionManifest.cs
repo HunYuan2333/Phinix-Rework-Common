@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Globalization;
 
 namespace Utils.Framework.ManagedExtensions
@@ -111,22 +112,56 @@ namespace Utils.Framework.ManagedExtensions
         public string WorkshopId { get; }
     }
 
+    /// <summary>Supported game adapter profiles, independent of business semantics.</summary>
+    public static class ManagedExtensionTargetFramework
+    {
+        public static string MetadataName(string targetFramework)
+        {
+            if (targetFramework == "net472") return ".NETFramework,Version=v4.7.2";
+            if (targetFramework == "net10.0") return ".NETCoreApp,Version=v10.0";
+            throw ManagedExtensionJson.Error("UnsupportedTargetFramework");
+        }
+        public static bool SupportsGame(string targetFramework, string gameVersion)
+        { return targetFramework == "net472" && gameVersion == "1.6" || targetFramework == "net10.0" && gameVersion == "1.7"; }
+    }
+
     public sealed class ManagedExtensionManifest
     {
         public const int SchemaVersion = 1;
+        public const int VariantSchemaVersion = 2;
         public const string Management = "phinix-dll";
         public const string FileName = "manifest.json";
         internal ManagedExtensionManifest(string id, string name, ManagedExtensionVersion version,
             ManagedExtensionCompatibility compatibility, IEnumerable<ManagedExtensionDependency> dependencies,
             IEnumerable<ManagedExtensionModule> modules, IEnumerable<ManagedExtensionAssembly> assemblies,
-            IEnumerable<ManagedExtensionFile> resources, IEnumerable<ManagedExtensionExternalMod> externalMods, ExtensionLocalizationDeclaration localization = null)
+            IEnumerable<ManagedExtensionFile> resources, IEnumerable<ManagedExtensionExternalMod> externalMods, ExtensionLocalizationDeclaration localization, string targetFramework,
+            IEnumerable<ManagedExtensionManifest> variants = null, string selectedGame = null)
         {
-            PackageId = id; Name = name; Version = version; Compatibility = compatibility;
+            PackageId = id; Name = name; Version = version; Compatibility = compatibility; TargetFramework = targetFramework;
             Dependencies = ManagedExtensionCompatibility.Freeze(dependencies); Modules = ManagedExtensionCompatibility.Freeze(modules);
             Assemblies = ManagedExtensionCompatibility.Freeze(assemblies); Resources = ManagedExtensionCompatibility.Freeze(resources);
             ExternalMods = ManagedExtensionCompatibility.Freeze(externalMods); Localization = localization;
+            Variants = ManagedExtensionCompatibility.Freeze(variants ?? new ManagedExtensionManifest[0]); SelectedGame = selectedGame;
+        }
+        public ReadOnlyCollection<ManagedExtensionManifest> Variants { get; }
+        public string SelectedGame { get; }
+        public IEnumerable<ManagedExtensionFile> AllFiles => Variants.Count == 0 ? Assemblies.Select(a=>a.File).Concat(Resources) : Variants.SelectMany(v=>v.AllFiles);
+        public bool SupportsGame(string game)
+        {
+            if(SelectedGame != null && SelectedGame != game) return false;
+            return Variants.Count == 0 ? ManagedExtensionTargetFramework.SupportsGame(TargetFramework,game) :
+                Variants.Any(v=>v.Compatibility.RimWorldVersions.Contains(game) && ManagedExtensionTargetFramework.SupportsGame(v.TargetFramework,game));
+        }
+        public ManagedExtensionManifest ForGame(string game)
+        {
+            if(Variants.Count == 0 || SelectedGame == game) return this;
+            var variant=Variants.SingleOrDefault(v=>v.Compatibility.RimWorldVersions.Contains(game));
+            if(variant == null) return this; // Ownership remains readable; candidate gate rejects unsupported games.
+            return new ManagedExtensionManifest(PackageId,Name,Version,Compatibility,Dependencies,Modules,variant.Assemblies,
+                variant.Resources,ExternalMods,variant.Localization,variant.TargetFramework,Variants,game);
         }
         public ExtensionLocalizationDeclaration Localization { get; }
+        public string TargetFramework { get; }
         public string PackageId { get; }
         public string Name { get; }
         public ManagedExtensionVersion Version { get; }

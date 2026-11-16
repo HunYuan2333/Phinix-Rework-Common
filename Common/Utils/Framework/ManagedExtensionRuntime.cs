@@ -23,6 +23,7 @@ namespace Utils.Framework
         private readonly Dictionary<string, Entry> entries = new Dictionary<string, Entry>(StringComparer.Ordinal);
         private readonly Dictionary<string, Assembly> hostAssemblies = new Dictionary<string, Assembly>(StringComparer.Ordinal);
         private readonly Dictionary<string, Assembly> hostReferenceBindings = new Dictionary<string, Assembly>(StringComparer.Ordinal);
+        private readonly Func<ManagedAssemblyIdentity,Assembly> resolveRuntimeFramework;
         private readonly HashSet<Assembly> baseline = new HashSet<Assembly>();
         private readonly List<Package> packages = new List<Package>();
         private readonly List<string> diagnostics = new List<string>();
@@ -32,7 +33,9 @@ namespace Utils.Framework
         private bool started, disposed;
         private long auditSequence;
         public ManagedExtensionRuntime(ManagedExtensionPaths paths, Action<ManagedExtensionRuntimeAudit> audit = null, Action<Exception> internalError = null)
-        { this.paths = paths ?? throw new ArgumentNullException(nameof(paths)); this.audit = audit; this.internalError = internalError; }
+            : this(paths,audit,internalError,null) { }
+        public ManagedExtensionRuntime(ManagedExtensionPaths paths, Action<ManagedExtensionRuntimeAudit> audit, Action<Exception> internalError, Func<ManagedAssemblyIdentity,Assembly> resolveRuntimeFramework)
+        { this.paths = paths ?? throw new ArgumentNullException(nameof(paths)); this.audit = audit; this.internalError = internalError; this.resolveRuntimeFramework = resolveRuntimeFramework; }
         public ManagedExtensionRuntimeSnapshot Snapshot
         { get { lock(sync) return new ManagedExtensionRuntimeSnapshot(startupId, packages.Select(p=>new ManagedExtensionRuntimePackage(p.Row,p.Code,p.Loaded)),diagnostics); } }
         public bool TryGetOwner(Assembly assembly, out ManagedExtensionPackageSnapshot package)
@@ -55,7 +58,7 @@ namespace Utils.Framework
                     diagnostics.AddRange(ManagedExtensionInstallationRecovery.Recover(paths,(code,row)=>Emit("install-recovery",code,row),token,Detail));
                     if(diagnostics.Count==0) diagnostics.AddRange(ManagedExtensionRemovalRecovery.Recover(paths,hostDependencies,baseline.Select(a=>a.GetName().Name).Concat(baseline.SelectMany(a=>a.GetReferencedAssemblies()).Select(a=>a.Name)),
                         (code,row)=>{ if(row?.RecordKey!=null) recoveryCodes[row.RecordKey]=code; Emit("recovery",code,row); },token,null,Detail));
-                    var inventory=ManagedExtensionInventoryReader.Read(paths,token); diagnostics.AddRange(inventory.Diagnostics);
+                    var inventory=ManagedExtensionInventoryReader.Read(paths,token,startupHost?.GameVersion); diagnostics.AddRange(inventory.Diagnostics);
                     var inspected=new Dictionary<string,ManagedExtensionInspectedPayload>(); long frozen=0;
                     foreach(var row in inventory.Packages)
                     {
@@ -65,17 +68,17 @@ namespace Utils.Framework
                         try
                         {
                             token.ThrowIfCancellationRequested();
-                            long size=row.Manifest.Assemblies.Sum(a=>a.File.Length)+(row.Manifest.Localization?.Files.Sum(f=>f.Length)??0);
+                            long size=row.Manifest.AllFiles.Sum(f=>f.Length)+(row.Manifest.Localization?.Files.Sum(f=>f.Length)??0);
                             if(frozen+size>ManagedExtensionManifestReader.MaxExpandedBytes) throw new ManagedExtensionValidationException("ManagedStartupMemoryLimit");
                             string root=paths.GetPackageDirectory(row.SourceId,row.PackageId);
                             var bytes=new Dictionary<string,byte[]>();
-                            foreach(var declaration in row.Manifest.Assemblies)
+                            foreach(var declaration in row.Manifest.Variants.Count==0?row.Manifest.Assemblies.AsEnumerable():row.Manifest.Variants.SelectMany(v=>v.Assemblies))
                             {
                                 string file=Path.Combine(root,declaration.File.Path); ManagedExtensionInventoryReader.NoLinks(file);
                                 bytes.Add(declaration.File.Path,ManagedExtensionInventoryReader.Bytes(file,(int)ManagedExtensionManifestReader.MaxFileBytes,token));
                             }
-                            package.Payload=ManagedExtensionPayloadInspector.Inspect(row.Manifest,bytes,token);
-                            var all=row.Manifest.Assemblies.Select(a=>a.File).Concat(row.Manifest.Resources).ToList();
+                            package.Payload=ManagedExtensionPayloadInspector.InspectAll(row.Manifest,bytes,token);
+                            var all=row.Manifest.AllFiles.ToList();
                             byte[] manifest=ManagedExtensionInventoryReader.Bytes(Path.Combine(root,"manifest.json"),ManagedExtensionManifestReader.MaxManifestBytes,token);
                             if(ManagedExtensionPaths.Hash(manifest)!=row.ManifestSha256) throw new ManagedExtensionValidationException("ManifestDigestMismatch");
                             all.Add(new ManagedExtensionFile("manifest.json",manifest.Length,row.ManifestSha256));
@@ -102,7 +105,31 @@ namespace Utils.Framework
                     foreach(var reference in entry.Bytes.Metadata.References.Where(r=>!entries.ContainsKey(r.FullName)))
                     {
                         var selected=ManagedAssemblyIdentity.SelectHostReference(reference,actualHost,host.ReferenceRules);
-                        if(selected==null) { entry.Package.Code="ManagedHostAssemblyUnavailable"; break; }
+                        if(selected==null && resolveRuntimeFramework!=null)
+                        {
+                            var declared=ManagedAssemblyIdentity.SelectHostReference(reference,host.Assemblies,host.ReferenceRules);
+                            if(declared!=null)
+                            {
+                                Assembly runtimeAssembly=null;
+                                try { runtimeAssembly=resolveRuntimeFramework(declared); }
+                                catch(Exception ex) { Detail(ex); }
+                                if(runtimeAssembly!=null && !runtimeAssembly.IsDynamic && runtimeAssembly.GetName().FullName==declared.FullName)
+                                {
+                                    // Explicit Host authority can materialize only its runtime
+                                    // framework references. Plugin resolvers never probe files.
+                                    hostAssemblies[declared.FullName]=runtimeAssembly; baseline.Add(runtimeAssembly);
+                                    actualHost.Add(declared); selected=declared;
+                                    Emit("preload","ManagedRuntimeFrameworkLoaded",entry.Package.Row,declared.Name);
+                                }
+                            }
+                        }
+                        if(selected==null)
+                        {
+                            entry.Package.Code="ManagedHostAssemblyUnavailable";
+                            Emit("preload",entry.Package.Code,entry.Package.Row,entry.Bytes.Metadata.Identity.Name,
+                                reference:new ManagedExtensionAssemblyReferenceFailure(entry.Bytes.Metadata.Identity.Name,reference,actualHost.Where(a=>a.Name==reference.Name).Select(a=>a.FullName)));
+                            break;
+                        }
                         // Freeze aliases to actual pre-start assemblies. Resolution never probes a
                         // directory, loads another version or adopts an assembly loaded later.
                         hostReferenceBindings[reference.FullName]=hostAssemblies[selected.FullName];
