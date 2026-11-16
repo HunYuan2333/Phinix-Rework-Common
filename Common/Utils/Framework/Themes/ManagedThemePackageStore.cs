@@ -37,8 +37,12 @@ namespace Utils.Framework.Themes
         private readonly Action<string> completeRemoval;
         private bool disposed;
         private const int MaxPackages=256;
-        public ManagedThemePackageStore(string saveRoot,Action<string> completeRemoval)
+        private readonly Action<string,Exception> diagnostics;
+        [ThreadStatic] private static int reporting;
+        public ManagedThemePackageStore(string saveRoot,Action<string> completeRemoval) : this(saveRoot,completeRemoval,null) { }
+        public ManagedThemePackageStore(string saveRoot,Action<string> completeRemoval,Action<string,Exception> diagnostics)
         {
+            this.diagnostics=diagnostics;
             paths=new ManagedExtensionPaths(saveRoot,"ManagedThemes"); this.completeRemoval=completeRemoval??throw new ArgumentNullException(nameof(completeRemoval));
             lease=ManagedExtensionLease.Acquire(paths);
         }
@@ -52,12 +56,12 @@ namespace Utils.Framework.Themes
             {
                 try { RecoverRemovals(token); }
                 catch(Exception ex) when(ex is IOException || ex is UnauthorizedAccessException || ex is ManagedExtensionValidationException)
-                { errors.Add(Code(ex)); }
+                { Report(diagnostics,"ThemeStoreRecoveryFailed",ex);errors.Add(Code(ex)); }
             }
-            return ReadInventory(paths,token,errors);
+            return ReadInventory(paths,token,errors,true,diagnostics);
                     }
 }
-        private static ThemePackageInventory ReadInventory(ManagedExtensionPaths paths,CancellationToken token,List<string> errors,bool hidePending=true)
+        private static ThemePackageInventory ReadInventory(ManagedExtensionPaths paths,CancellationToken token,List<string> errors,bool hidePending=true,Action<string,Exception> diagnostics=null)
         {
             var packages=new List<InstalledThemePackage>();
             long retainedBytes=0;
@@ -102,7 +106,7 @@ namespace Utils.Framework.Themes
                             packages.Add(new InstalledThemePackage(row,manifest,documents));
                         }
                         catch(Exception ex) when(ex is IOException || ex is UnauthorizedAccessException || ex is ManagedExtensionValidationException)
-                        { errors.Add(Path.GetFileName(file)+": "+Code(ex)); }
+                        { Report(diagnostics,"ThemeStoreRecordRejected",ex);errors.Add(Path.GetFileName(file)+": "+Code(ex)); }
                     }
                 }
                 foreach(string directory in new[]{paths.PackagesDirectory,paths.DesiredStateDirectory})
@@ -122,7 +126,7 @@ namespace Utils.Framework.Themes
                 // An in-progress commit must not expose mixed package versions.
                 if(hidePending && Directory.Exists(paths.TransactionsDirectory) && Directory.EnumerateFileSystemEntries(paths.TransactionsDirectory).Any()) { packages.Clear(); errors.Add("ThemeRecoveryRequired"); }
             }
-            catch(Exception ex) when(ex is IOException || ex is UnauthorizedAccessException || ex is ManagedExtensionValidationException) { errors.Add(Code(ex)); }
+            catch(Exception ex) when(ex is IOException || ex is UnauthorizedAccessException || ex is ManagedExtensionValidationException) { Report(diagnostics,"ThemeStoreInventoryReadFailed",ex);errors.Add(Code(ex)); }
             return new ThemePackageInventory(packages,errors);
         }
         public void Install(ThemePackage package,string expectedArtifact,string hostVersion,Action<string> checkOtherPackage,CancellationToken token)
@@ -144,7 +148,7 @@ namespace Utils.Framework.Themes
             {
                 ManagedExtensionInstallationRecovery.InstallData(paths,row,manifest,files,old?.Record,token,t=>
                 {
-                    var fresh=ReadInventory(paths,t,new List<string>(),false);
+                    var fresh=ReadInventory(paths,t,new List<string>(),false,diagnostics);
                     // Compare the pre-decision inventory, including unchanged packages.
                     if(fresh.Diagnostics.Count!=0 || fresh.Packages.Count!=inventory.Packages.Count || inventory.Packages.Any(p=>!fresh.Packages.Any(v=>v.Record.ReceiptBytes.SequenceEqual(p.Record.ReceiptBytes)))) throw Error("DataInventoryUncertain");
                     checkOtherPackage?.Invoke(package.Manifest.PackageId);
@@ -217,6 +221,15 @@ namespace Utils.Framework.Themes
         }
         private static void RequireCertain(ThemePackageInventory inventory) { if(inventory.Diagnostics.Count!=0) throw Error("DataInventoryUncertain"); }
         private void RequireLive() { if(disposed) throw new ObjectDisposedException(nameof(ManagedThemePackageStore)); }
+        private static void Report(Action<string,Exception> sink,string operation,Exception error)
+        {
+            if(reporting>=8){ExtensionDiagnostics.TraceSensitive(operation,error);return;}
+            reporting++;
+            try {
+                if(sink!=null)try{sink(operation,error);return;}catch(Exception observer){ExtensionDiagnostics.TraceSensitive("ThemeStoreDiagnosticObserverFailed",observer);}
+                ExtensionDiagnostics.TraceSensitive(operation,error);
+            }finally{reporting--;}
+        }
         private static string Code(Exception ex) => (ex as ManagedExtensionValidationException)?.Code??"ThemeStorageFailed";
         private static ManagedExtensionValidationException Error(string code) => new ManagedExtensionValidationException(code);
         public void Dispose() { if(disposed) return; disposed=true; lease.Dispose(); }

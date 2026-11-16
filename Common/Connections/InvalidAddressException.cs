@@ -8,7 +8,8 @@ namespace Connections
 
         public readonly string Address;
 
-        public InvalidAddressException(string address)
+        public InvalidAddressException(string address) : this(address,null) { }
+        public InvalidAddressException(string address,Exception cause) : base(null,cause)
         {
             this.Address = address;
         }

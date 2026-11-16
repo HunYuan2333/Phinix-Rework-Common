@@ -506,7 +506,7 @@ namespace Utils.Framework
 
         public void Log(string message, LogLevel level = LogLevel.INFO, Exception exception = null, string correlationId = null)
         {
-            sink?.Invoke(new HostLogEntry(ExtensionId, level, message, exception, correlationId));
+            ExtensionDiagnostics.Write(sink, null, new HostLogEntry(ExtensionId, level, message, exception, correlationId));
         }
     }
 
@@ -584,17 +584,7 @@ namespace Utils.Framework
 
         public IExtensionLogger GetExtensionLogger(string extensionId)
         {
-            return new ExtensionLogger(extensionId, entry =>
-            {
-                if (StructuredLog != null)
-                {
-                    StructuredLog(entry);
-                }
-                else
-                {
-                    Log?.Invoke(entry.ToDisplayMessage(), entry.Level);
-                }
-            });
+            return new ExtensionLogger(extensionId, entry => ExtensionDiagnostics.Write(StructuredLog, Log, entry));
         }
 
         public void SetOption(string key, string value)
@@ -1139,6 +1129,9 @@ namespace Utils.Framework
         public List<IPhinixExtension> Extensions { get; } = new List<IPhinixExtension>();
 
         public List<IPhinixExtensionModule> Modules { get; } = new List<IPhinixExtensionModule>();
+
+        // Cache the identity already validated at registration; later plugin getters may fail.
+        internal readonly List<KeyValuePair<IPhinixExtensionModule,string>> ModuleIdentities = new List<KeyValuePair<IPhinixExtensionModule,string>>();
 
         public List<string> Diagnostics { get; } = new List<string>();
 

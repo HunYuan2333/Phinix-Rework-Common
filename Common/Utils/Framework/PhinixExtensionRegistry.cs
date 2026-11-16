@@ -19,7 +19,12 @@ namespace Utils.Framework
 
         public static List<Type> ScanCandidateModuleTypes(IExtensionDiscoveryPolicy discoveryPolicy)
         {
-            return scanCandidateTypes(discoveryPolicy)
+            return ScanCandidateModuleTypes(discoveryPolicy, null);
+        }
+
+        public static List<Type> ScanCandidateModuleTypes(IExtensionDiscoveryPolicy discoveryPolicy, Action<HostLogEntry> diagnostics)
+        {
+            return scanCandidateTypes(discoveryPolicy, diagnostics)
                 .Where(type => typeof(IPhinixExtensionModule).IsAssignableFrom(type))
                 .OrderBy(type => type.FullName, StringComparer.Ordinal)
                 .ToList();
@@ -45,9 +50,11 @@ namespace Utils.Framework
             {
                 return discoverExtensions(hostContext, activationPolicy, discovered);
             }
-            catch
+            catch (Exception error)
             {
-                ShutdownExtensions(discovered, hostContext);
+                ExtensionDiagnostics.Report(hostContext, "framework", "DiscoveryFailed", error);
+                try { ShutdownExtensions(discovered, hostContext); }
+                catch (Exception cleanup) { ExtensionDiagnostics.Report(hostContext, "framework", "DiscoveryCleanupFailed", cleanup); }
                 throw;
             }
         }
@@ -63,7 +70,7 @@ namespace Utils.Framework
             HashSet<string> seenExtensionIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             hostContext.TryGetService<IExtensionDiscoveryPolicy>(out var discoveryPolicy);
-            List<Type> candidateTypes = scanCandidateTypes(discoveryPolicy);
+            List<Type> candidateTypes = scanCandidateTypes(discoveryPolicy, entry => ExtensionDiagnostics.Write(hostContext.StructuredLog, hostContext.Log, entry));
 
             List<Type> moduleTypes = candidateTypes
                 .Where(type => typeof(IPhinixExtensionModule).IsAssignableFrom(type))
@@ -71,7 +78,7 @@ namespace Utils.Framework
                 .ToList();
 
             // 构建依赖图（纯反射，不实例化模块）——供 UI 展示依赖关系和禁用影响
-            ExtensionDependencyGraph dependencyGraph = ExtensionDependencyGraph.Build(moduleTypes);
+            ExtensionDependencyGraph dependencyGraph = ExtensionDependencyGraph.Build(moduleTypes, entry => ExtensionDiagnostics.Write(hostContext.StructuredLog, hostContext.Log, entry));
             discovered.DependencyGraph = dependencyGraph;
             foreach (string graphWarning in dependencyGraph.BuildWarnings)
             {
@@ -86,7 +93,9 @@ namespace Utils.Framework
 
             foreach (Type invalidType in moduleTypes)
             {
-                PhinixExtensionAttribute invalidAttribute = invalidType.GetCustomAttribute<PhinixExtensionAttribute>();
+                PhinixExtensionAttribute invalidAttribute = null;
+                try { invalidAttribute = invalidType.GetCustomAttribute<PhinixExtensionAttribute>(); }
+                catch { /* Build already retained the metadata failure; use its fallback identity below. */ }
                 string invalidId = invalidAttribute?.ExtensionId ?? invalidType.Name;
                 if (!dependencyGraph.TryGetValidationError(invalidId, out string validationError))
                 {
@@ -155,16 +164,19 @@ namespace Utils.Framework
                 }
 
                 IPhinixExtensionModule module;
+                string actualId = null;
                 try
                 {
                     module = Activator.CreateInstance(moduleType) as IPhinixExtensionModule;
+                    if (module != null) actualId = module.ExtensionId;
                 }
                 catch (Exception exception)
                 {
+                    ExtensionDiagnostics.Report(hostContext, extensionId, "ModuleConstructFailed", exception);
                     result.State = ExtensionModuleState.Failed;
-                    result.StateDetail = $"FAILED to initialize: {exception.Message}";
+                    result.StateDetail = $"FAILED to initialize: {exception.GetType().Name}";
                     discovered.ExtensionResults.Add(result);
-                    discovered.Warnings.Add($"Extension '{extensionId}' FAILED to load (this is a bug, please report it): {exception.Message}");
+                    discovered.Warnings.Add($"Extension '{extensionId}' FAILED to load (this is a bug, please report it): {exception.GetType().Name}");
                     continue;
                 }
 
@@ -176,27 +188,27 @@ namespace Utils.Framework
                     continue;
                 }
 
-                result.ExtensionId = module.ExtensionId;
+                result.ExtensionId = actualId;
 
-                if (!string.Equals(module.ExtensionId, extensionId, StringComparison.OrdinalIgnoreCase))
+                if (!string.Equals(actualId, extensionId, StringComparison.OrdinalIgnoreCase))
                 {
                     result.State = ExtensionModuleState.Failed;
-                    result.StateDetail = $"Module ExtensionId '{module.ExtensionId}' does not match declared ID '{extensionId}'.";
+                    result.StateDetail = $"Module ExtensionId '{actualId}' does not match declared ID '{extensionId}'.";
                     discovered.ExtensionResults.Add(result);
                     discovered.Warnings.Add(result.StateDetail);
                     continue;
                 }
 
-                ExtensionBuilder builder = new ExtensionBuilder(module.ExtensionId, hostContext, discovered, apiRegistry, result);
-                if (!seenExtensionIds.Add(module.ExtensionId))
+                ExtensionBuilder builder = new ExtensionBuilder(actualId, hostContext, discovered, apiRegistry, result);
+                if (!seenExtensionIds.Add(actualId))
                 {
-                    discovered.Warnings.Add($"Duplicate extension ID '{module.ExtensionId}' discovered in '{moduleType.FullName}'.");
+                    discovered.Warnings.Add($"Duplicate extension ID '{actualId}' discovered in '{moduleType.FullName}'.");
                 }
 
                 try
                 {
                     Action<string, LogLevel> previousLog = hostContext.Log;
-                    hostContext.Log = createScopedLog(hostContext, module.ExtensionId, previousLog);
+                    hostContext.Log = createScopedLog(hostContext, actualId, previousLog);
                     try
                     {
                         module.Register(builder);
@@ -208,18 +220,21 @@ namespace Utils.Framework
                     result.State = ExtensionModuleState.Registered;
                     discovered.Extensions.Add(module);
                     discovered.Modules.Add(module);
-                    discovered.RegistrationRollbacks[module.ExtensionId] = builder.Rollback;
+                    discovered.ModuleIdentities.Add(new KeyValuePair<IPhinixExtensionModule,string>(module, actualId));
+                    discovered.RegistrationRollbacks[actualId] = builder.Rollback;
                     discovered.Diagnostics.Add(
-                        $"Framework module '{module.ExtensionId}' registered from '{moduleType.FullName}' " +
+                        $"Framework module '{actualId}' registered from '{moduleType.FullName}' " +
                         $"for host '{hostContext.HostKind ?? "unknown"}'.");
                 }
                 catch (Exception exception)
                 {
+                    ExtensionDiagnostics.Report(hostContext, extensionId, "ModuleRegisterFailed", exception);
                     cleanupModule(module, extensionId, discovered, hostContext);
-                    builder.Rollback();
+                    try { builder.Rollback(); }
+                    catch (Exception cleanup) { ExtensionDiagnostics.Report(hostContext, extensionId, "RegistrationRollbackFailed", cleanup); }
                     result.State = ExtensionModuleState.Failed;
-                    result.StateDetail = $"FAILED to register: {exception.Message}";
-                    discovered.Warnings.Add($"Extension '{module.ExtensionId}' FAILED to register (this is a bug, please report it): {exception.Message}");
+                    result.StateDetail = $"FAILED to register: {exception.GetType().Name}";
+                    discovered.Warnings.Add($"Extension '{actualId}' FAILED to register (this is a bug, please report it): {exception.GetType().Name}");
                 }
 
                 discovered.ExtensionResults.Add(result);
@@ -240,7 +255,8 @@ namespace Utils.Framework
                 }
                 catch (Exception exception)
                 {
-                    discovered.Warnings.Add($"Failed to initialize legacy extension component '{legacyComponentType.FullName}': {exception.Message}");
+                    ExtensionDiagnostics.Report(hostContext, legacyComponentType.Assembly.GetName().Name, "LegacyComponentConstructFailed", exception);
+                    discovered.Warnings.Add($"Failed to initialize legacy extension component '{legacyComponentType.FullName}': {exception.GetType().Name}");
                     continue;
                 }
 
@@ -378,24 +394,24 @@ namespace Utils.Framework
                 }
             }
 
-            discovered.MessageInterceptors.Sort((left, right) => left.Priority.CompareTo(right.Priority));
-            discovered.ClientMessageHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
-            discovered.ServerMessageHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
-            discovered.ServerInboundMessageInterceptors.Sort((left, right) => left.Priority.CompareTo(right.Priority));
-            discovered.ServerDefaultMessageHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
-            discovered.ServerMessageObservers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
-            discovered.ClientCommandHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
-            discovered.ServerCommandHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
-            discovered.ServerInboundCommandInterceptors.Sort((left, right) => left.Priority.CompareTo(right.Priority));
-            discovered.ServerDefaultCommandHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
-            discovered.ServerCommandObservers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
-            discovered.ServerOutboundPacketInterceptors.Sort((left, right) => left.Priority.CompareTo(right.Priority));
-            discovered.ClientIncomingItemHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
-            discovered.ClientOutgoingItemHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
-            discovered.ServerItemHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
-            discovered.ServerInboundItemInterceptors.Sort((left, right) => left.Priority.CompareTo(right.Priority));
-            discovered.ServerDefaultItemHandlers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
-            discovered.ServerItemObservers.Sort((left, right) => left.Priority.CompareTo(right.Priority));
+            sortParticipants(discovered.MessageInterceptors, value => value.Priority, hostContext);
+            sortParticipants(discovered.ClientMessageHandlers, value => value.Priority, hostContext);
+            sortParticipants(discovered.ServerMessageHandlers, value => value.Priority, hostContext);
+            sortParticipants(discovered.ServerInboundMessageInterceptors, value => value.Priority, hostContext);
+            sortParticipants(discovered.ServerDefaultMessageHandlers, value => value.Priority, hostContext);
+            sortParticipants(discovered.ServerMessageObservers, value => value.Priority, hostContext);
+            sortParticipants(discovered.ClientCommandHandlers, value => value.Priority, hostContext);
+            sortParticipants(discovered.ServerCommandHandlers, value => value.Priority, hostContext);
+            sortParticipants(discovered.ServerInboundCommandInterceptors, value => value.Priority, hostContext);
+            sortParticipants(discovered.ServerDefaultCommandHandlers, value => value.Priority, hostContext);
+            sortParticipants(discovered.ServerCommandObservers, value => value.Priority, hostContext);
+            sortParticipants(discovered.ServerOutboundPacketInterceptors, value => value.Priority, hostContext);
+            sortParticipants(discovered.ClientIncomingItemHandlers, value => value.Priority, hostContext);
+            sortParticipants(discovered.ClientOutgoingItemHandlers, value => value.Priority, hostContext);
+            sortParticipants(discovered.ServerItemHandlers, value => value.Priority, hostContext);
+            sortParticipants(discovered.ServerInboundItemInterceptors, value => value.Priority, hostContext);
+            sortParticipants(discovered.ServerDefaultItemHandlers, value => value.Priority, hostContext);
+            sortParticipants(discovered.ServerItemObservers, value => value.Priority, hostContext);
 
             return discovered;
         }
@@ -413,7 +429,8 @@ namespace Utils.Framework
             catch (Exception error)
             {
                 success = false;
-                discovered.Warnings.Add($"Extension '{extensionId}' cleanup failed: {error.Message}");
+                ExtensionDiagnostics.Report(context, extensionId, "ModuleShutdownFailed", error);
+                discovered.Warnings.Add($"Extension '{extensionId}' cleanup failed: {error.GetType().Name}");
             }
             finally
             {
@@ -426,7 +443,8 @@ namespace Utils.Framework
                 catch (Exception error)
                 {
                     success = false;
-                    discovered.Warnings.Add($"Extension '{extensionId}' host resource cleanup failed: {error.Message}");
+                    ExtensionDiagnostics.Report(context, extensionId, "ModuleResourceCleanupFailed", error);
+                    discovered.Warnings.Add($"Extension '{extensionId}' host resource cleanup failed: {error.GetType().Name}");
                 }
             }
             return success;
@@ -438,8 +456,9 @@ namespace Utils.Framework
 
             foreach (IActivatablePhinixExtensionModule module in discovered?.Modules?.OfType<IActivatablePhinixExtensionModule>() ?? Enumerable.Empty<IActivatablePhinixExtensionModule>())
             {
+                string extensionId = registeredModuleId(discovered, (IPhinixExtensionModule)module);
                 ExtensionDiscoveryResult result = discovered.ExtensionResults
-                    .Find(r => string.Equals(r.ExtensionId, module.ExtensionId, StringComparison.OrdinalIgnoreCase));
+                    .Find(r => string.Equals(r.ExtensionId, extensionId, StringComparison.OrdinalIgnoreCase));
 
                 if (result == null || result.State != ExtensionModuleState.Registered)
                 {
@@ -455,15 +474,15 @@ namespace Utils.Framework
                     result.State = ExtensionModuleState.Failed;
                     result.StateDetail = $"Dependency '{failedDependency?.ExtensionId ?? "unknown"}' did not activate successfully.";
                     cleanupModule((IPhinixExtensionModule)module, result.ExtensionId, discovered, hostContext);
-                    rollbackRegistration(discovered, hostContext, module.ExtensionId);
-                    discovered.Warnings.Add($"Extension '{module.ExtensionId}' was not activated: {result.StateDetail}");
+                    rollbackRegistration(discovered, hostContext, extensionId);
+                    discovered.Warnings.Add($"Extension '{extensionId}' was not activated: {result.StateDetail}");
                     continue;
                 }
 
                 try
                 {
                     Action<string, LogLevel> previousLog = hostContext.Log;
-                    hostContext.Log = createScopedLog(hostContext, module.ExtensionId, previousLog);
+                    hostContext.Log = createScopedLog(hostContext, extensionId, previousLog);
                     try
                     {
                         IExtensionModuleLifecycleObserver observer;
@@ -475,19 +494,20 @@ namespace Utils.Framework
                         hostContext.Log = previousLog;
                     }
                     if (result != null) result.State = ExtensionModuleState.Active;
-                    discovered.Diagnostics.Add($"Framework module '{module.ExtensionId}' activated for host '{hostContext.HostKind ?? "unknown"}'.");
+                    discovered.Diagnostics.Add($"Framework module '{extensionId}' activated for host '{hostContext.HostKind ?? "unknown"}'.");
                 }
                 catch (Exception exception)
                 {
+                    ExtensionDiagnostics.Report(hostContext, result.ExtensionId, "ModuleActivateFailed", exception);
                     cleanupRegisteredDependents(discovered, hostContext, result.ExtensionId);
                     cleanupModule((IPhinixExtensionModule)module, result.ExtensionId, discovered, hostContext);
-                    rollbackRegistration(discovered, hostContext, module.ExtensionId);
+                    rollbackRegistration(discovered, hostContext, extensionId);
                     if (result != null)
                     {
                         result.State = ExtensionModuleState.Failed;
-                        result.StateDetail = $"FAILED to activate: {exception.Message}";
+                        result.StateDetail = $"FAILED to activate: {exception.GetType().Name}";
                     }
-                    discovered.Warnings.Add($"Extension '{module.ExtensionId}' FAILED to activate (this is a bug, please report it): {exception.Message}");
+                    discovered.Warnings.Add($"Extension '{extensionId}' FAILED to activate (this is a bug, please report it): {exception.GetType().Name}");
                 }
             }
         }
@@ -498,8 +518,9 @@ namespace Utils.Framework
 
             foreach (IPhinixExtensionModule module in (discovered?.Modules?.AsEnumerable() ?? Enumerable.Empty<IPhinixExtensionModule>()).Reverse())
             {
+                string extensionId = registeredModuleId(discovered, (IPhinixExtensionModule)module);
                 ExtensionDiscoveryResult result = discovered.ExtensionResults
-                    .Find(r => string.Equals(r.ExtensionId, module.ExtensionId, StringComparison.OrdinalIgnoreCase));
+                    .Find(r => string.Equals(r.ExtensionId, extensionId, StringComparison.OrdinalIgnoreCase));
 
                 if (result == null || (result.State != ExtensionModuleState.Active && result.State != ExtensionModuleState.Registered))
                 {
@@ -511,20 +532,21 @@ namespace Utils.Framework
                     bool cleaned = cleanupModule(module, result.ExtensionId, discovered, hostContext);
                     result.State = cleaned ? ExtensionModuleState.Shutdown : ExtensionModuleState.Failed;
                     if (!cleaned) result.StateDetail = "FAILED to clean up; see extension warnings.";
-                    discovered.Diagnostics.Add($"Framework module '{module.ExtensionId}' shut down for host '{hostContext.HostKind ?? "unknown"}'.");
+                    discovered.Diagnostics.Add($"Framework module '{extensionId}' shut down for host '{hostContext.HostKind ?? "unknown"}'.");
                 }
                 catch (Exception exception)
                 {
+                    ExtensionDiagnostics.Report(hostContext, extensionId, "ModuleShutdownFailed", exception);
                     if (result != null)
                     {
                         result.State = ExtensionModuleState.Failed;
-                        result.StateDetail = $"FAILED to shut down: {exception.Message}";
+                        result.StateDetail = $"FAILED to shut down: {exception.GetType().Name}";
                     }
-                    discovered.Warnings.Add($"Extension '{module.ExtensionId}' FAILED to shut down (this is a bug, please report it): {exception.Message}");
+                    discovered.Warnings.Add($"Extension '{extensionId}' FAILED to shut down (this is a bug, please report it): {exception.GetType().Name}");
                 }
                 finally
                 {
-                    rollbackRegistration(discovered, hostContext, module.ExtensionId);
+                    rollbackRegistration(discovered, hostContext, extensionId);
                 }
             }
         }
@@ -541,8 +563,9 @@ namespace Utils.Framework
             }
             foreach (IPhinixExtensionModule module in discovered.Modules.AsEnumerable().Reverse())
             {
+                string extensionId = registeredModuleId(discovered, (IPhinixExtensionModule)module);
                 ExtensionDiscoveryResult result = discovered.ExtensionResults.Find(r =>
-                    string.Equals(r.ExtensionId, module.ExtensionId, StringComparison.OrdinalIgnoreCase));
+                    string.Equals(r.ExtensionId, extensionId, StringComparison.OrdinalIgnoreCase));
                 if (result == null || result.State != ExtensionModuleState.Registered ||
                     !failedIds.Contains(result.ExtensionId) ||
                     string.Equals(result.ExtensionId, failedExtensionId, StringComparison.OrdinalIgnoreCase)) continue;
@@ -554,12 +577,18 @@ namespace Utils.Framework
             }
         }
 
+        private static string registeredModuleId(DiscoveredPhinixExtensions discovered, IPhinixExtensionModule module)
+        {
+            return discovered.ModuleIdentities.FirstOrDefault(pair => ReferenceEquals(pair.Key, module)).Value ?? module.ExtensionId;
+        }
+
         private static void rollbackRegistration(DiscoveredPhinixExtensions discovered, ExtensionHostContext hostContext, string extensionId)
         {
             if (discovered != null && discovered.RegistrationRollbacks.TryGetValue(extensionId, out Action rollback))
             {
-                rollback();
-                discovered.RegistrationRollbacks.Remove(extensionId);
+                try { rollback(); }
+                catch (Exception error) { ExtensionDiagnostics.Report(hostContext, extensionId, "RegistrationRollbackFailed", error); }
+                finally { discovered.RegistrationRollbacks.Remove(extensionId); }
             }
             (discovered?.ApiRegistry as ExtensionApiRegistry)?.UnregisterOwner(extensionId);
             hostContext?.UnregisterPersistents(extensionId);
@@ -570,18 +599,16 @@ namespace Utils.Framework
             return (message, level) =>
             {
                 HostLogEntry entry = new HostLogEntry(extensionId, level, message);
-                if (hostContext.StructuredLog != null)
-                {
-                    hostContext.StructuredLog(entry);
-                }
-                else
-                {
-                    fallback?.Invoke(entry.ToDisplayMessage(), level);
-                }
+                ExtensionDiagnostics.Write(hostContext.StructuredLog, fallback, entry);
             };
         }
 
         public static string[] CollectCapabilities(DiscoveredPhinixExtensions discovered)
+        {
+            return CollectCapabilities(discovered, null);
+        }
+
+        public static string[] CollectCapabilities(DiscoveredPhinixExtensions discovered, ExtensionHostContext context)
         {
             HashSet<string> capabilities = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
@@ -594,6 +621,8 @@ namespace Utils.Framework
 
             foreach (ICapabilityProvider capabilityProvider in discovered.CapabilityProviders)
             {
+                try
+                {
                 foreach (string capability in capabilityProvider.GetCapabilities() ?? Enumerable.Empty<string>())
                 {
                     if (string.IsNullOrEmpty(capability)) continue;
@@ -603,24 +632,48 @@ namespace Utils.Framework
                         discovered.Warnings.Add($"Duplicate capability ID '{capability}' discovered during framework registration.");
                     }
                 }
+                }
+                catch (Exception error) { ExtensionDiagnostics.Report(context, capabilityProvider.GetType().Assembly.GetName().Name, "CapabilityProviderFailed", error); }
             }
 
             return capabilities.OrderBy(capability => capability).ToArray();
         }
 
-        private static List<Type> scanCandidateTypes(IExtensionDiscoveryPolicy discoveryPolicy = null)
+        private static void sortParticipants<T>(List<T> participants, Func<T, int> priority, ExtensionHostContext context)
         {
-            return AppDomain.CurrentDomain
-                .GetAssemblies()
-                .Where(assembly => (discoveryPolicy == null || discoveryPolicy.ShouldScanAssembly(assembly)) && isCandidateExtensionAssembly(assembly))
-                .SelectMany(getLoadableTypes)
-                .Where(type => discoveryPolicy == null || discoveryPolicy.ShouldDiscoverType(type))
-                .Where(isConcreteExtensionType)
-                .Where(hasPublicParameterlessConstructor)
-                .ToList();
+            var valid = new List<Tuple<T, int>>();
+            foreach (var participant in participants)
+                try { valid.Add(Tuple.Create(participant, priority(participant))); }
+                catch (Exception error) { ExtensionDiagnostics.Report(context, participant.GetType().Assembly.GetName().Name, "ParticipantPriorityFailed", error); }
+            participants.Clear();
+            participants.AddRange(valid.OrderBy(value => value.Item2).Select(value => value.Item1));
         }
 
-        private static bool isConcreteExtensionType(Type type)
+        private static List<Type> scanCandidateTypes(IExtensionDiscoveryPolicy discoveryPolicy = null, Action<HostLogEntry> diagnostics = null)
+        {
+            var types = new List<Type>();
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try
+                {
+                    if (discoveryPolicy != null && !discoveryPolicy.ShouldScanAssembly(assembly)) continue;
+                    if (!isCandidateExtensionAssembly(assembly, diagnostics)) continue;
+                    foreach (var type in getLoadableTypes(assembly, diagnostics))
+                    {
+                        try
+                        {
+                            if (discoveryPolicy != null && !discoveryPolicy.ShouldDiscoverType(type)) continue;
+                            if (isConcreteExtensionType(type, diagnostics) && hasPublicParameterlessConstructor(type, diagnostics)) types.Add(type);
+                        }
+                        catch (Exception error) { ExtensionDiagnostics.Write(diagnostics, null, new HostLogEntry(assembly.GetName().Name, LogLevel.ERROR, "DiscoveryTypePolicyFailed", error)); }
+                    }
+                }
+                catch (Exception error) { ExtensionDiagnostics.Write(diagnostics, null, new HostLogEntry(assembly.GetName().Name, LogLevel.ERROR, "DiscoveryAssemblyPolicyFailed", error)); }
+            }
+            return types;
+        }
+
+        private static bool isConcreteExtensionType(Type type, Action<HostLogEntry> diagnostics)
         {
             if (type == null) return false;
 
@@ -633,13 +686,12 @@ namespace Utils.Framework
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine(
-                    $"[Phinix] Skipped extension type '{type.FullName}' while checking its contracts: {ex.Message}");
+                ExtensionDiagnostics.Write(diagnostics, (message, level) => System.Diagnostics.Trace.TraceError(message), new HostLogEntry(type.Assembly.GetName().Name, LogLevel.ERROR, "ExtensionTypeContractFailed", ex));
                 return false;
             }
         }
 
-        private static bool hasPublicParameterlessConstructor(Type type)
+        private static bool hasPublicParameterlessConstructor(Type type, Action<HostLogEntry> diagnostics)
         {
             try
             {
@@ -647,13 +699,12 @@ namespace Utils.Framework
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine(
-                    $"[Phinix] Skipped extension type '{type.FullName}' while checking its constructor: {ex.Message}");
+                ExtensionDiagnostics.Write(diagnostics, (message, level) => System.Diagnostics.Trace.TraceError(message), new HostLogEntry(type.Assembly.GetName().Name, LogLevel.ERROR, "ExtensionConstructorProbeFailed", ex));
                 return false;
             }
         }
 
-        private static IEnumerable<Type> getLoadableTypes(Assembly assembly)
+        private static IEnumerable<Type> getLoadableTypes(Assembly assembly, Action<HostLogEntry> diagnostics)
         {
             try
             {
@@ -661,17 +712,17 @@ namespace Utils.Framework
             }
             catch (ReflectionTypeLoadException exception)
             {
+                ExtensionDiagnostics.Write(diagnostics, null, new HostLogEntry(assembly.GetName().Name, LogLevel.ERROR, "AssemblyTypesPartiallyLoaded", exception));
                 return exception.Types.Where(type => type != null);
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine(
-                    $"[Phinix] Failed to enumerate extension types from '{assembly.FullName}': {ex.Message}");
+                ExtensionDiagnostics.Write(diagnostics, (message, level) => System.Diagnostics.Trace.TraceError(message), new HostLogEntry(assembly.GetName().Name, LogLevel.ERROR, "AssemblyTypesFailed", ex));
                 return Enumerable.Empty<Type>();
             }
         }
 
-        private static bool isCandidateExtensionAssembly(Assembly assembly)
+        private static bool isCandidateExtensionAssembly(Assembly assembly, Action<HostLogEntry> diagnostics)
         {
             if (assembly == null || assembly.IsDynamic)
             {
@@ -707,7 +758,7 @@ namespace Utils.Framework
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[Phinix] PhinixExtensionRegistry.isCandidateExtensionAssembly failed for '{assembly?.GetName()?.Name}': {ex.Message}");
+                ExtensionDiagnostics.Write(diagnostics, (message, level) => System.Diagnostics.Trace.TraceError(message), new HostLogEntry(assembly.GetName().Name, LogLevel.ERROR, "AssemblyCandidateProbeFailed", ex));
                 return false;
             }
         }
@@ -866,12 +917,12 @@ namespace Utils.Framework
             {
                 if (rolledBack) return;
                 rolledBack = true;
+                var failures = new List<Exception>();
                 for (int index = rollbackActions.Count - 1; index >= 0; index--)
-                {
-                    rollbackActions[index]();
-                }
-                apiRegistry.UnregisterOwner(extensionId);
-                hostContext.UnregisterPersistents(extensionId);
+                    try { rollbackActions[index](); } catch (Exception error) { failures.Add(error); }
+                try { apiRegistry.UnregisterOwner(extensionId); } catch (Exception error) { failures.Add(error); }
+                try { hostContext.UnregisterPersistents(extensionId); } catch (Exception error) { failures.Add(error); }
+                if (failures.Count != 0) throw new AggregateException("Registration rollback failed.", failures);
             }
 
             private void addIfMissing<T>(ICollection<T> collection, T item)

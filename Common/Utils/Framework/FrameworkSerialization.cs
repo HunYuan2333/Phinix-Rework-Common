@@ -106,7 +106,13 @@ namespace Utils.Framework
 
         public static bool TryExtractItemPayload(FrameworkPacket packet, out FrameworkItemPayload payload)
         {
+            return TryExtractItemPayload(packet, out payload, null);
+        }
+
+        public static bool TryExtractItemPayload(FrameworkPacket packet, out FrameworkItemPayload payload, Action<HostLogEntry> diagnostics)
+        {
             payload = null;
+            if (packet == null) return false;
 
             if (packet.PayloadBytes != null && packet.PayloadBytes.Length > 0
                 && string.IsNullOrEmpty(packet.PayloadJson))
@@ -120,9 +126,9 @@ namespace Utils.Framework
                 }
                 catch (Exception ex)
                 {
-                    // Protobuf ParseFrom failed — malformed item payload, skip silently
+                    // Protobuf ParseFrom failed — malformed item payload, reject this payload
                     // per design philosophy SS3.5: single message parse failure must not interrupt the pipeline
-                    System.Diagnostics.Debug.WriteLine($"[Phinix] FrameworkSerialization.TryExtractItemPayload: Protobuf parse failed: {ex.Message}");
+                    ExtensionDiagnostics.Write(diagnostics, (message, level) => System.Diagnostics.Trace.TraceWarning(message), new HostLogEntry("framework", LogLevel.WARNING, "ItemProtobufDecodeFailed", ex));
                 }
             }
 
@@ -135,8 +141,8 @@ namespace Utils.Framework
                 }
                 catch (Exception ex)
                 {
-                    // JSON deserialization failed — malformed item payload, skip silently
-                    System.Diagnostics.Debug.WriteLine($"[Phinix] FrameworkSerialization.TryExtractItemPayload: JSON parse failed: {ex.Message}");
+                    // JSON deserialization failed — malformed item payload, reject this payload
+                    ExtensionDiagnostics.Write(diagnostics, (message, level) => System.Diagnostics.Trace.TraceWarning(message), new HostLogEntry("framework", LogLevel.WARNING, "ItemJSONDecodeFailed", ex));
                 }
             }
 
