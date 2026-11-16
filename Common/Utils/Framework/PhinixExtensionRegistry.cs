@@ -590,8 +590,12 @@ namespace Utils.Framework
                 catch (Exception error) { ExtensionDiagnostics.Report(hostContext, extensionId, "RegistrationRollbackFailed", error); }
                 finally { discovered.RegistrationRollbacks.Remove(extensionId); }
             }
-            (discovered?.ApiRegistry as ExtensionApiRegistry)?.UnregisterOwner(extensionId);
-            hostContext?.UnregisterPersistents(extensionId);
+            try { (discovered?.ApiRegistry as ExtensionApiRegistry)?.UnregisterOwner(extensionId); }
+            catch(Exception error){ExtensionDiagnostics.Report(hostContext,extensionId,"ApiOwnerRollbackFailed",error);}
+            try { hostContext?.UnregisterPersistents(extensionId); }
+            catch(Exception error){ExtensionDiagnostics.Report(hostContext,extensionId,"PersistentOwnerRollbackFailed",error);}
+            try { if (hostContext != null && hostContext.TryGetService<IClientCommandCapabilities>(out var capabilities)) capabilities.RevokeOwner(extensionId); }
+            catch(Exception error){ExtensionDiagnostics.Report(hostContext,extensionId,"CapabilityOwnerRollbackFailed",error);}
         }
 
         private static Action<string, LogLevel> createScopedLog(ExtensionHostContext hostContext, string extensionId, Action<string, LogLevel> fallback)
@@ -615,6 +619,7 @@ namespace Utils.Framework
                 "core.framework.v2",
                 "core.message-pipeline",
                 "core.command-pipeline",
+                CommandRelayProtocol.Capability,
                 "core.item-pipeline",
                 "core.outbound-pipeline"
             };
@@ -922,6 +927,8 @@ namespace Utils.Framework
                     try { rollbackActions[index](); } catch (Exception error) { failures.Add(error); }
                 try { apiRegistry.UnregisterOwner(extensionId); } catch (Exception error) { failures.Add(error); }
                 try { hostContext.UnregisterPersistents(extensionId); } catch (Exception error) { failures.Add(error); }
+                try { if (hostContext.TryGetService<IClientCommandCapabilities>(out var capabilities)) capabilities.RevokeOwner(extensionId); }
+                catch(Exception error) { failures.Add(error); }
                 if (failures.Count != 0) throw new AggregateException("Registration rollback failed.", failures);
             }
 
