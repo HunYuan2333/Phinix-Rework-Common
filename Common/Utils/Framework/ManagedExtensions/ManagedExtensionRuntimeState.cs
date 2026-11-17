@@ -31,8 +31,10 @@ namespace Utils.Framework.ManagedExtensions
 
     public sealed class ManagedExtensionRuntimeAudit
     {
-        internal ManagedExtensionRuntimeAudit(string startupId, string stage, string code, ManagedExtensionPackageSnapshot package, string assemblyName = null, string moduleId = null, long sequence = 0,ManagedExtensionAssemblyReferenceFailure referenceFailure=null,string resourcePath=null)
-        { StartupId = startupId; Stage = stage; Code = code; Package = package; AssemblyName = assemblyName; ModuleId = moduleId; Sequence=sequence; TimeUtc=DateTime.UtcNow; ReferenceFailure=referenceFailure; ResourcePath=resourcePath; }
+        internal ManagedExtensionRuntimeAudit(string startupId, string stage, string code, ManagedExtensionPackageSnapshot package, string assemblyName = null, string moduleId = null, long sequence = 0,ManagedExtensionAssemblyReferenceFailure referenceFailure=null,string resourcePath=null,string operation=null,string relatedPackageId=null)
+        { StartupId = startupId; Stage = stage; Code = code; Package = package; AssemblyName = assemblyName; ModuleId = moduleId; Sequence=sequence; TimeUtc=DateTime.UtcNow; ReferenceFailure=referenceFailure; ResourcePath=resourcePath; Operation=operation; RelatedPackageId=relatedPackageId; }
+        public string Operation { get; }
+        public string RelatedPackageId { get; }
         public string StartupId { get; }
         public long Sequence { get; }
         public DateTime TimeUtc { get; }

@@ -25,6 +25,7 @@ namespace Utils.Framework
         private readonly Dictionary<string, Assembly> hostReferenceBindings = new Dictionary<string, Assembly>(StringComparer.Ordinal);
         private readonly Func<ManagedAssemblyIdentity,Assembly> resolveRuntimeFramework;
         private readonly HashSet<Assembly> baseline = new HashSet<Assembly>();
+        private readonly Dictionary<Assembly,AssemblyName[]> baselineReferences = new Dictionary<Assembly,AssemblyName[]>();
         private readonly List<Package> packages = new List<Package>();
         private readonly List<string> diagnostics = new List<string>();
         private readonly object sync = new object();
@@ -53,10 +54,12 @@ namespace Utils.Framework
                 { baseline.Add(assembly); hostAssemblies[assembly.GetName().FullName]=assembly; }
                 try
                 {
-                    token.ThrowIfCancellationRequested(); lease=ManagedExtensionLease.Acquire(paths); Emit("startup","ManagedLeaseAcquired",null);
+                    token.ThrowIfCancellationRequested();
+                    foreach(var assembly in baseline) CaptureBaselineReferences(assembly);
+                    lease=ManagedExtensionLease.Acquire(paths); Emit("startup","ManagedLeaseAcquired",null);
                     var recoveryCodes=new Dictionary<string,string>(StringComparer.Ordinal);
                     diagnostics.AddRange(ManagedExtensionInstallationRecovery.Recover(paths,(code,row)=>Emit("install-recovery",code,row),token,Detail));
-                    if(diagnostics.Count==0) diagnostics.AddRange(ManagedExtensionRemovalRecovery.Recover(paths,hostDependencies,baseline.Select(a=>a.GetName().Name).Concat(baseline.SelectMany(a=>a.GetReferencedAssemblies()).Select(a=>a.Name)),
+                    if(diagnostics.Count==0) diagnostics.AddRange(ManagedExtensionRemovalRecovery.Recover(paths,hostDependencies,baseline.Select(a=>a.GetName().Name).Concat(baselineReferences.Values.SelectMany(references=>references).Select(a=>a.Name)),
                         (code,row)=>{ if(row?.RecordKey!=null) recoveryCodes[row.RecordKey]=code; Emit("recovery",code,row); },token,null,Detail));
                     var inventory=ManagedExtensionInventoryReader.Read(paths,token,startupHost?.GameVersion); diagnostics.AddRange(inventory.Diagnostics);
                     var inspected=new Dictionary<string,ManagedExtensionInspectedPayload>(); long frozen=0;
@@ -118,6 +121,7 @@ namespace Utils.Framework
                                     // Explicit Host authority can materialize only its runtime
                                     // framework references. Plugin resolvers never probe files.
                                     hostAssemblies[declared.FullName]=runtimeAssembly; baseline.Add(runtimeAssembly);
+                                    CaptureBaselineReferences(runtimeAssembly);
                                     actualHost.Add(declared); selected=declared;
                                     Emit("preload","ManagedRuntimeFrameworkLoaded",entry.Package.Row,declared.Name);
                                 }
@@ -264,11 +268,22 @@ namespace Utils.Framework
                     if(p!=null) Emit("lifecycle","ManagedModule"+result.State,p.Row,result.AssemblyName,result.ExtensionId);
                 }
         }
+        private void CaptureBaselineReferences(Assembly assembly)
+        {
+            // Restart intents depend on the pre-plugin host, not references imported
+            // later by live patches. AssemblyName itself is mutable, so clone it too.
+            if(!baselineReferences.ContainsKey(assembly))
+                baselineReferences.Add(assembly,assembly.GetReferencedAssemblies().Select(reference=>(AssemblyName)reference.Clone()).ToArray());
+        }
         private void FailDomain(string code)
         { diagnostics.Add(code); foreach(var p in packages) p.Code=code; Emit("startup",code,null); }
-        private void Emit(string stage,string code,ManagedExtensionPackageSnapshot row,string assembly=null,string module=null,ManagedExtensionAssemblyReferenceFailure reference=null,string resourcePath=null)
-        { try { audit?.Invoke(new ManagedExtensionRuntimeAudit(startupId,stage,code,row,assembly,module,++auditSequence,reference,resourcePath)); } catch { } }
-        private void Detail(Exception ex) { try { internalError?.Invoke(ex); } catch { } }
+        private void Emit(string stage,string code,ManagedExtensionPackageSnapshot row,string assembly=null,string module=null,ManagedExtensionAssemblyReferenceFailure reference=null,string resourcePath=null,string operation=null,string relatedPackageId=null)
+        { try { audit?.Invoke(new ManagedExtensionRuntimeAudit(startupId,stage,code,row,assembly,module,++auditSequence,reference,resourcePath,operation,relatedPackageId)); }
+            catch(Exception error) { ExtensionDiagnostics.TraceSensitive("ManagedAuditSinkFailed",error); } }
+        private void Detail(Exception ex)
+        { try { internalError?.Invoke(ex); } catch(Exception error) {
+            ExtensionDiagnostics.TraceSensitive("ManagedDiagnosticSinkFailed",error);
+            ExtensionDiagnostics.TraceSensitive("ManagedOriginalFailure",ex); } }
         public void Dispose()
         {
             lock(sync)

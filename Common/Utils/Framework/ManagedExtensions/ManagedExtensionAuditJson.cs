@@ -9,7 +9,7 @@ namespace Utils.Framework.ManagedExtensions
             if(entry==null) throw new System.ArgumentNullException(nameof(entry));
             var row=entry.Package;
             return "{\"schemaVersion\":1,\"event\":\"managed_extension\",\"time\":"+Q(entry.TimeUtc.ToString("o",System.Globalization.CultureInfo.InvariantCulture))+",\"sequence\":"+entry.Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture)+",\"startupId\":"+Q(entry.StartupId)+
-                ",\"stage\":"+Q(entry.Stage)+",\"code\":"+Q(entry.Code)+",\"sourceId\":"+Q(row?.SourceId)+",\"packageId\":"+Q(row?.PackageId)+
+                ",\"stage\":"+Q(entry.Stage)+",\"code\":"+Q(entry.Code)+",\"operation\":"+Q(entry.Operation)+",\"relatedPackageId\":"+Q(entry.RelatedPackageId)+",\"sourceId\":"+Q(row?.SourceId)+",\"packageId\":"+Q(row?.PackageId)+
                 ",\"recordKey\":"+Q(row?.RecordKey)+",\"version\":"+Q(row?.Version)+",\"manifestSha256\":"+Q(row?.ManifestSha256)+",\"catalogSnapshotId\":"+Q(row?.CatalogSnapshotId)+
                 ",\"catalogSha256\":"+Q(row?.CatalogSha256)+",\"artifactSha256\":"+Q(row?.ArtifactSha256)+",\"installationTransactionId\":"+Q(row?.InstallationTransactionId)+
                 ",\"stateOperationId\":"+Q(row?.StateOperationId)+",\"assemblyName\":"+Q(entry.AssemblyName)+",\"moduleId\":"+Q(entry.ModuleId)+

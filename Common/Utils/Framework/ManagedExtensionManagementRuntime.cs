@@ -11,6 +11,8 @@ namespace Utils.Framework
     {
         private ManagedExtensionHostFacts startupHost;
         private HashSet<string> startupDisabledModules=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private Dictionary<string,string> managementGateLogState=new Dictionary<string,string>(StringComparer.Ordinal);
+        private string inventoryGateLogState=string.Empty;
 
         public ManagedExtensionManagementSnapshot Refresh(IEnumerable<string> disabledModules, CancellationToken token)
         {
@@ -20,18 +22,86 @@ namespace Utils.Framework
                 var inventory=ManagedExtensionInventoryReader.Read(paths,token,startupHost?.GameVersion);
                 string global=ManagementGate(inventory,token);
                 var disabled=new HashSet<string>(disabledModules??new string[0],StringComparer.OrdinalIgnoreCase);
+                var nextLogState=new Dictionary<string,string>(StringComparer.Ordinal);
                 var rows=inventory.Packages.Select(row=>
                 {
                     var current=packages.FirstOrDefault(p=>p.Row.RecordKey!=null && p.Row.RecordKey==row.RecordKey);
                     string basic=global??OwnershipGate(row);
-                    return new ManagedExtensionManagementPackage(row,current==null?null:new ManagedExtensionRuntimePackage(current.Row,current.Code,current.Loaded),
+                    var result=new ManagedExtensionManagementPackage(row,current==null?null:new ManagedExtensionRuntimePackage(current.Row,current.Code,current.Loaded),
                         basic??EnableIntentGate(row,inventory,disabled),basic??ReverseGate(row,inventory,false),basic??ReverseGate(row,inventory,true),basic??ModuleSettingsGate(row,inventory),
                         row.Manifest?.Modules.Any(m=>disabled.Contains(m.Id)!=startupDisabledModules.Contains(m.Id))==true);
+                    ObserveManagementGate(row,"enable",result.EnableBlockCode,inventory,nextLogState);
+                    ObserveManagementGate(row,"disable",result.DisableBlockCode,inventory,nextLogState);
+                    ObserveManagementGate(row,"removal",result.RemovalBlockCode,inventory,nextLogState);
+                    ObserveManagementGate(row,"module-settings",result.ModuleSettingsBlockCode,inventory,nextLogState);
+                    return result;
                 }).ToList();
+                managementGateLogState=nextLogState;
                 var codes=inventory.Diagnostics.Concat(global==null?new string[0]:new[]{global}).Distinct().ToList();
+                ObserveInventoryDiagnostics(codes);
                 Emit("management","ManagedInventoryRefreshed",null);
                 return new ManagedExtensionManagementSnapshot(rows,codes);
             }
+        }
+
+        private void ObserveInventoryDiagnostics(IEnumerable<string> codes)
+        {
+            try
+            {
+                var reasons=codes.OrderBy(code=>code,StringComparer.Ordinal).ToArray();
+                string signature=string.Join("|",reasons);
+                if(signature==inventoryGateLogState) return;
+                inventoryGateLogState=signature;
+                if(reasons.Length==0) Emit("management-inventory","ManagedInventoryGateCleared",null,operation:"RefreshInventory");
+                else foreach(string reason in reasons) Emit("management-inventory",reason,null,operation:"RefreshInventory");
+            }
+            catch(Exception error) { ExtensionDiagnostics.TraceSensitive("ManagedInventoryAuditFailed",error); }
+        }
+
+        // Observes the existing decisions only. Retain one state per current package/action,
+        // so repeated UI refreshes do not spam logs or accumulate old package identities.
+        private void ObserveManagementGate(ManagedExtensionPackageSnapshot row,string operation,string code,
+            ManagedExtensionInventorySnapshot inventory,Dictionary<string,string> next)
+        {
+            try
+            {
+                string key=(row.RecordKey??row.SourceId+":"+row.PackageId)+":"+operation;
+                string previous; managementGateLogState.TryGetValue(key,out previous);
+                if(code==null)
+                {
+                    if(previous!=null) Emit("management-gate","ManagedGateCleared",row,operation:operation);
+                    return;
+                }
+                string assembly=null,module=null,related=null;
+                ManagedExtensionAssemblyReferenceFailure reference=null;
+                if(code=="ManagedHostAssemblyDependent" && row.Manifest!=null)
+                    foreach(var host in baselineReferences)
+                    {
+                        var required=host.Value.FirstOrDefault(r=>row.Manifest.Assemblies.Any(a=>a.Name==r.Name));
+                        if(required==null) continue;
+                        assembly=host.Key.GetName().Name;
+                        reference=new ManagedExtensionAssemblyReferenceFailure(assembly,ManagedAssemblyIdentity.FromAssemblyName(required),new string[0]);
+                        break;
+                    }
+                if(code=="ManagedHasDependents" && row.Manifest!=null)
+                {
+                    var ids=new HashSet<string>(row.Manifest.Modules.Select(m=>m.Id),StringComparer.OrdinalIgnoreCase);
+                    var other=inventory.Packages.FirstOrDefault(p=>p.RecordKey!=row.RecordKey && p.Manifest!=null &&
+                        (operation=="removal"?p.DesiredState!=ManagedExtensionDesiredState.PendingRemoval:p.DesiredState==ManagedExtensionDesiredState.Enabled) &&
+                        (p.Manifest.Dependencies.Any(d=>d.PackageId==row.PackageId) || p.Manifest.Modules.Any(m=>m.DependsOn.Any(ids.Contains))));
+                    related=other?.PackageId;
+                    module=other?.Manifest.Modules.FirstOrDefault(m=>m.DependsOn.Any(ids.Contains))?.Id;
+                }
+                if(code=="ManagedHostHasDependents" && row.Manifest!=null)
+                {
+                    var ids=new HashSet<string>(row.Manifest.Modules.Select(m=>m.Id),StringComparer.OrdinalIgnoreCase);
+                    module=startupHost.ModuleDeclarations.FirstOrDefault(m=>m.DependsOn.Any(ids.Contains))?.Id;
+                }
+                string signature=code+"|"+assembly+"|"+module+"|"+related+"|"+reference?.RequiredReference+"|"+row.StateOperationId;
+                next[key]=signature;
+                if(previous!=signature) Emit("management-gate",code,row,assembly,module,reference,operation:operation,relatedPackageId:related);
+            }
+            catch(Exception error) { ExtensionDiagnostics.TraceSensitive("ManagedManagementGateAuditFailed",error); }
         }
 
         public ManagedExtensionStateChangeResult ChangeDesiredState(ManagedExtensionPackageSnapshot expected,
@@ -72,7 +142,7 @@ namespace Utils.Framework
                 catch(Exception ex)
                 {
                     string code=ex is ManagedExtensionValidationException?((ManagedExtensionValidationException)ex).Code:"ManagedStateWriteFailed";
-                    Emit("state",code,preparedOperation==null?row??expected:CopyState(row,desired,preparedOperation)); Detail(ex);
+                    Emit("state",code,preparedOperation==null?row??expected:CopyState(row,desired,preparedOperation),operation:"SetDesiredState/"+desired); Detail(ex);
                     return new ManagedExtensionStateChangeResult(false,code,row,preparedOperation);
                 }
             }
@@ -119,8 +189,9 @@ namespace Utils.Framework
                     return "ManagedHasDependents";
             }
             if(startupHost.ModuleDeclarations.Any(m=>m.DependsOn.Any(ids.Contains))) return "ManagedHostHasDependents";
-            // An unmanaged CLR reference can bind before managed removal; keep the original code available.
-            if(baseline.Any(a=>a.GetReferencedAssemblies().Any(r=>row.Manifest.Assemblies.Any(own=>own.Name==r.Name)))) return "ManagedHostAssemblyDependent";
+            // Keep real pre-plugin dependencies available on next startup. References
+            // imported by this session's patches disappear when the process restarts.
+            if(baselineReferences.Values.Any(references=>references.Any(r=>row.Manifest.Assemblies.Any(own=>own.Name==r.Name)))) return "ManagedHostAssemblyDependent";
             return null;
         }
         private string EnableIntentGate(ManagedExtensionPackageSnapshot row, ManagedExtensionInventorySnapshot inventory, HashSet<string> disabled)
