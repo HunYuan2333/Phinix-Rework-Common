@@ -17,11 +17,12 @@ namespace Utils.Framework
         private readonly List<string> warnings;
         private readonly Dictionary<string, string> validationErrors;
         private readonly Dictionary<Type, int> sourceOrder;
+        private readonly Dictionary<Type, string> identities;
 
         private ExtensionDependencyGraph(Dictionary<string, List<string>> dependencies,
             Dictionary<string, List<string>> dependents, HashSet<string> undeclared,
             List<string> warnings, Dictionary<string, string> validationErrors,
-            Dictionary<Type, int> sourceOrder)
+            Dictionary<Type, int> sourceOrder, Dictionary<Type, string> identities)
         {
             this.dependencies = dependencies;
             this.dependents = dependents;
@@ -29,9 +30,15 @@ namespace Utils.Framework
             this.warnings = warnings;
             this.validationErrors = validationErrors;
             this.sourceOrder = sourceOrder;
+            this.identities = identities;
         }
 
         public static ExtensionDependencyGraph Build(IEnumerable<Type> moduleTypes)
+        {
+            return Build(moduleTypes, null);
+        }
+
+        public static ExtensionDependencyGraph Build(IEnumerable<Type> moduleTypes, Action<HostLogEntry> diagnostics)
         {
             Dictionary<string, List<string>> dependencies = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
             Dictionary<string, List<string>> dependents = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
@@ -39,6 +46,7 @@ namespace Utils.Framework
             List<string> warnings = new List<string>();
             Dictionary<string, string> errors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             Dictionary<Type, int> order = new Dictionary<Type, int>();
+            var identities = new Dictionary<Type, string>();
             Dictionary<string, List<Type>> typesById = new Dictionary<string, List<Type>>(StringComparer.OrdinalIgnoreCase);
             List<Type> types = (moduleTypes ?? Enumerable.Empty<Type>()).Where(type => type != null)
                 .OrderBy(type => type.FullName, StringComparer.Ordinal).ToList();
@@ -51,6 +59,7 @@ namespace Utils.Framework
                 {
                     PhinixExtensionAttribute attribute = moduleType.GetCustomAttribute<PhinixExtensionAttribute>();
                     string extensionId = attribute?.ExtensionId ?? moduleType.Name;
+                    identities[moduleType] = extensionId;
                     if (!typesById.TryGetValue(extensionId, out List<Type> matchingTypes))
                     {
                         matchingTypes = new List<Type>();
@@ -65,7 +74,9 @@ namespace Utils.Framework
                 }
                 catch (Exception exception)
                 {
+                    ExtensionDiagnostics.Write(diagnostics, null, new HostLogEntry(moduleType.Assembly.GetName().Name, LogLevel.ERROR, "DependencyMetadataFailed", exception));
                     string fallbackId = moduleType.Name;
+                    identities[moduleType] = fallbackId;
                     errors[fallbackId] = "Failed to read extension dependency metadata: " + exception.Message;
                     warnings.Add($"Failed to read extension metadata from '{moduleType.FullName}': {exception.GetType().Name}: {exception.Message}");
                 }
@@ -98,7 +109,7 @@ namespace Utils.Framework
 
             detectCycles(dependencies, errors, warnings);
             propagateInvalidDependencies(dependencies, errors, warnings);
-            return new ExtensionDependencyGraph(dependencies, dependents, undeclared, warnings, errors, order);
+            return new ExtensionDependencyGraph(dependencies, dependents, undeclared, warnings, errors, order, identities);
         }
 
         private static void detectCycles(Dictionary<string, List<string>> dependencies,
@@ -183,10 +194,10 @@ namespace Utils.Framework
             return result;
         }
 
-        private static string getExtensionId(Type type)
+        private string getExtensionId(Type type)
         {
-            PhinixExtensionAttribute attribute = type.GetCustomAttribute<PhinixExtensionAttribute>();
-            return attribute?.ExtensionId ?? type.Name;
+            // Metadata was read and diagnosed once at Build. Do not rerun a failing attribute constructor.
+            return identities.TryGetValue(type, out string id) ? id : type.Name;
         }
 
         public bool TryGetValidationError(string extensionId, out string error)

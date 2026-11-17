@@ -95,6 +95,18 @@ namespace Connections
         /// </summary>
         /// <param name="peer">Peer the packet originated from</param>
         /// <param name="reader">Data reader containing the payload</param>
+        // Endpoint adapters can bind a sensitive diagnostic sink without changing wire contracts.
+        protected Action<string,Exception> PacketFault;
+        private void ReportPacketFault(string operation,Exception error)
+        {
+            if(PacketFault!=null)try {PacketFault(operation,error);return;}catch(Exception observer) {
+                Utils.Framework.ExtensionDiagnostics.Write(null,(text,level)=>RaiseLogEntry(new LogEventArgs(text,level)),
+                    new Utils.Framework.HostLogEntry("transport",LogLevel.ERROR,"PacketDiagnosticObserverFailed",observer));
+            }
+            Utils.Framework.ExtensionDiagnostics.Write(null,(text,level)=>RaiseLogEntry(new LogEventArgs(text,level)),
+                new Utils.Framework.HostLogEntry("transport",LogLevel.ERROR,operation,error));
+        }
+
         private void packetHandlerCallbackWrapper(NetPeer peer, NetDataReader reader)
         {
             string type;
@@ -109,9 +121,7 @@ namespace Connections
             }
             catch (Exception ex)
             {
-                RaiseLogEntry(new LogEventArgs(
-                    $"Failed to read incoming packet from peer {peer.ConnectId:X}: {ex.Message}",
-                    LogLevel.ERROR));
+                ReportPacketFault("PacketEnvelopeReadFailed",ex);
                 return;
             }
 
@@ -125,9 +135,7 @@ namespace Connections
                     }
                     catch (Exception ex)
                     {
-                        RaiseLogEntry(new LogEventArgs(
-                            $"Unhandled exception in packet handler for module '{type}' from {connectionId}: {ex}",
-                            LogLevel.ERROR));
+                        ReportPacketFault("PacketHandlerFailed",ex);
                     }
                 }
             }

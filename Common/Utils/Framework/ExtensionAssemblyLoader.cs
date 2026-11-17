@@ -13,9 +13,20 @@ namespace Utils.Framework
         /// already loaded assemblies remain subject to normal CLR lifetime rules.</summary>
         public static IDisposable LoadOwnedAssemblies(IEnumerable<string> directories, Action<string, LogLevel> log = null)
         {
-            var scope = new OwnedLoader(directories, log);
+            return LoadOwnedAssemblies(directories, log, null);
+        }
+
+        public static IDisposable LoadOwnedAssemblies(IEnumerable<string> directories, Action<string, LogLevel> log, Action<HostLogEntry> diagnostics)
+        {
+            var scope = new OwnedLoader(directories, log, diagnostics);
             try { scope.Start(); return scope; }
-            catch { scope.Dispose(); throw; }
+            catch (Exception error)
+            {
+                ExtensionDiagnostics.Write(diagnostics, log, new HostLogEntry("assembly-loader", LogLevel.ERROR, "OwnedLoaderStartFailed", error));
+                try { scope.Dispose(); }
+                catch (Exception cleanup) { ExtensionDiagnostics.Write(diagnostics, log, new HostLogEntry("assembly-loader", LogLevel.ERROR, "OwnedLoaderCleanupFailed", cleanup)); }
+                throw;
+            }
         }
 
         private sealed class OwnedLoader : IDisposable
@@ -28,10 +39,12 @@ namespace Utils.Framework
             private readonly List<Candidate> candidates = new List<Candidate>();
             private readonly HashSet<string> paths;
             private readonly Action<string, LogLevel> log;
+            private readonly Action<HostLogEntry> diagnostics;
             private bool disposed;
-            internal OwnedLoader(IEnumerable<string> directories, Action<string, LogLevel> log)
+            internal OwnedLoader(IEnumerable<string> directories, Action<string, LogLevel> log, Action<HostLogEntry> diagnostics)
             {
                 this.log = log;
+                this.diagnostics = diagnostics;
                 paths = new HashSet<string>(Path.DirectorySeparatorChar == '\\' ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
                 foreach (string directory in (directories ?? Array.Empty<string>()).Where(d => !string.IsNullOrWhiteSpace(d)).Select(Path.GetFullPath).Distinct(paths.Comparer))
                 {
@@ -44,7 +57,7 @@ namespace Utils.Framework
                             var name = AssemblyName.GetAssemblyName(file);
                             if (paths.Add(Path.GetFullPath(file))) candidates.Add(new Candidate { Path = Path.GetFullPath(file), Identity = name });
                         }
-                        catch (Exception ex) { Report("Skipped owned assembly candidate '" + file + "': " + ex.Message, LogLevel.WARNING); }
+                        catch (Exception ex) { Failure("OwnedAssemblyCandidateFailed", ex); }
                     }
                 }
                 foreach (var group in candidates.GroupBy(c => c.Identity.Name, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1).ToArray())
@@ -55,6 +68,8 @@ namespace Utils.Framework
             }
             private void Report(string message, LogLevel level)
             { try { log?.Invoke(message, level); } catch { } }
+            private void Failure(string operation, Exception error)
+            { ExtensionDiagnostics.Write(diagnostics, log, new HostLogEntry("assembly-loader", LogLevel.ERROR, operation, error)); }
             internal void Start()
             {
                 // Install before the first LoadFrom so initial dependency requests are scoped too.
@@ -72,7 +87,7 @@ namespace Utils.Framework
                         }
                         Load(candidate);
                     }
-                    catch (Exception ex) { Report("Owned assembly load failed: " + candidate.Identity.FullName + ": " + ex.Message, LogLevel.WARNING); }
+                    catch (Exception ex) { Failure("OwnedAssemblyLoadFailed", ex); }
                 }
             }
             private Assembly Load(Candidate candidate)
@@ -95,7 +110,7 @@ namespace Utils.Framework
                 var candidate = candidates.SingleOrDefault(c => c.Identity.FullName == args.Name);
                 if (candidate == null) return null;
                 try { return Load(candidate); }
-                catch (Exception ex) { Report("Owned dependency resolution failed: " + args.Name + ": " + ex.Message, LogLevel.WARNING); return null; }
+                catch (Exception ex) { Failure("OwnedDependencyResolutionFailed", ex); return null; }
             }
             public void Dispose()
             {
@@ -195,7 +210,7 @@ namespace Utils.Framework
                         try { return Assembly.LoadFrom(cachedPath); }
                         catch (Exception ex)
                         {
-                            log?.Invoke($"AssemblyResolve: failed to load '{cachedPath}': {ex.Message}", LogLevel.WARNING);
+                            log?.Invoke($"AssemblyResolve: failed to load '{cachedPath}': {ex}", LogLevel.WARNING);
                         }
                     }
 
@@ -211,7 +226,7 @@ namespace Utils.Framework
                             try { return Assembly.LoadFrom(candidatePath); }
                             catch (Exception ex)
                             {
-                                log?.Invoke($"AssemblyResolve: failed to load '{candidatePath}': {ex.Message}", LogLevel.WARNING);
+                                log?.Invoke($"AssemblyResolve: failed to load '{candidatePath}': {ex}", LogLevel.WARNING);
                             }
                         }
 
@@ -231,7 +246,7 @@ namespace Utils.Framework
                                 try { return Assembly.LoadFrom(existingPath); }
                                 catch (Exception ex)
                                 {
-                                    log?.Invoke($"AssemblyResolve: failed to load '{existingPath}': {ex.Message}", LogLevel.WARNING);
+                                    log?.Invoke($"AssemblyResolve: failed to load '{existingPath}': {ex}", LogLevel.WARNING);
                                 }
                             }
                         }
@@ -251,7 +266,7 @@ namespace Utils.Framework
             }
             catch (Exception exception)
             {
-                log?.Invoke($"Skipped extension assembly candidate '{assemblyPath}': {exception.Message}", LogLevel.DEBUG);
+                log?.Invoke($"Skipped extension assembly candidate '{assemblyPath}': {exception}", LogLevel.DEBUG);
                 return;
             }
 
@@ -283,7 +298,7 @@ namespace Utils.Framework
                 {
                     log?.Invoke(
                         $"Failed to load extension assembly '{assemblyPath}'. " +
-                        $"Assembly.LoadFrom error: {loadFromException.Message}. Assembly.Load error: {loadException.Message}",
+                        $"Assembly.LoadFrom error: {loadFromException}. Assembly.Load error: {loadException}",
                         LogLevel.WARNING);
                 }
             }

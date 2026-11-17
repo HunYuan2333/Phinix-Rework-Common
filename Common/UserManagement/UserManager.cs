@@ -47,16 +47,10 @@ namespace UserManagement
 
             lock (userStoreLock)
             {
-                User matchingUser;
-                try
-                {
-                    matchingUser = userStore.Users.Values.Single(user => user.Username == username);
-                }
-                catch (InvalidOperationException)
-                {
-                    return false;
-                }
-                
+                // Missing/ambiguous names are ordinary lookup results, not exceptions.
+                var matches=userStore.Users.Values.Where(user=>user.Username==username).Take(2).ToArray();
+                if(matches.Length!=1)return false;
+                User matchingUser=matches[0];
                 uuid = matchingUser.Uuid;
             }
             

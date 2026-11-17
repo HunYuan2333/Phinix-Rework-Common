@@ -52,13 +52,20 @@ namespace Utils.Framework.Themes
             if(File.Exists(destination) || Directory.Exists(destination)) throw new IOException("Export target already exists. Choose another path.");
             Directory.CreateDirectory(Path.GetDirectoryName(destination)); ManagedExtensionInventoryReader.NoLinks(destination);
             string temporary=destination+"."+Guid.NewGuid().ToString("N")+".tmp";
-            ManagedExtensionInstallationRecovery.ValidateFilePath(temporary); byte[] bytes=package.CopyArchive(); bool created=false;
+            ManagedExtensionInstallationRecovery.ValidateFilePath(temporary); byte[] bytes=package.CopyArchive(); bool created=false; Exception primary=null;
             try
             {
-                using(var output=new FileStream(temporary,FileMode.CreateNew,FileAccess.Write,FileShare.None)) {created=true;output.Write(bytes,0,bytes.Length);output.Flush(true);}
+                var output=new FileStream(temporary,FileMode.CreateNew,FileAccess.Write,FileShare.None);created=true;Exception writing=null;
+                try {output.Write(bytes,0,bytes.Length);output.Flush(true);}
+                catch(Exception error){writing=error;throw;}
+                finally {try{output.Dispose();}catch(Exception cleanup){if(writing!=null)throw new AggregateException("Theme archive write and close failed.",writing,cleanup);throw;}}
                 ManagedExtensionInventoryReader.NoLinks(destination); File.Move(temporary,destination);
             }
-            finally { if(created && File.Exists(temporary)) { ManagedExtensionInventoryReader.NoLinks(temporary); File.Delete(temporary); } }
+            catch(Exception error){primary=error;throw;}
+            finally {
+                try {if(created && File.Exists(temporary)){ManagedExtensionInventoryReader.NoLinks(temporary);File.Delete(temporary);}}
+                catch(Exception cleanup){if(primary!=null)throw new AggregateException("Theme archive write and temporary cleanup failed.",primary,cleanup);throw;}
+            }
         }
         private static string Quote(string value)
         {
